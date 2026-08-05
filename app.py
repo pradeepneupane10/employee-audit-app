@@ -199,9 +199,13 @@ if run_btn:
             "--non-interactive"
         ]
         
-        ui_log("Launching Chrome headless browser engine...")
-        progress_bar.progress(0.3, text="Logging in & executing queries...")
-        
+        # Ensure Playwright Chromium binary is installed
+        import subprocess
+        try:
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False)
+        except Exception:
+            pass
+
         # Execute scraper
         audit_automation.main()
         

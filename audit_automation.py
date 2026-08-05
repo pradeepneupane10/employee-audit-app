@@ -197,7 +197,8 @@ def main():
     # Start Playwright
     with sync_playwright() as p:
         log("Launching Chrome browser...")
-        browser = p.chromium.launch(headless=False, args=["--start-maximized"])
+        is_headless = os.environ.get("HEADLESS", "true").lower() != "false"
+        browser = p.chromium.launch(headless=is_headless, args=["--no-sandbox", "--disable-setuid-sandbox"])
         context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
         page = context.new_page()
         

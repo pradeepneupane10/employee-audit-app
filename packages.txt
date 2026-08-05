@@ -1,0 +1,6 @@
+chromium
+chromium-driver
+libnss3
+libgdk-pixbuf2.0-0
+libgtk-3-0
+libx11-xcb1

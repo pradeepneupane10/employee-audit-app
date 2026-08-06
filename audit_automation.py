@@ -974,24 +974,27 @@ def main():
         df['Action / Transfer Remark'] = [r[2] for r in res_results]
         
         def classify_work_type(row):
-            title = str(row.get('Title', '')).strip().lower()
-            remark = str(row.get('Grid Remark', '')).strip().lower()
+            remark = str(row.get('Grid Remark', '')).strip()
+            solution = str(row.get('Solution Given', '')).strip()
+            employee_note = str(row.get('Employee Remark / Solution Note', '')).strip()
+            title = str(row.get('Title', '')).strip()
             category = str(row.get('Category', '')).strip()
-            text = f"{title} {remark}".lower()
             
-            if 'wifi 6' in text or 'wifi6' in text or 'wi-fi 6' in text or 'wifi-6' in text:
-                if 'upgrade' in text or 'upgarde' in text:
-                    return 'WiFi 6 Router Upgrade'
-                return 'WiFi 6 Setup / Issue'
-            elif 'router' in text and ('upgrade' in text or 'upgarde' in text):
-                return 'Router Upgrade (General)'
-            elif 'iptv' in text or 'tv' in text:
-                return 'IPTV Related Issue'
-            elif 'hardware' in text or 'damage' in text or 'light' in text or 'malfunction' in text:
-                return 'Hardware Damage / Malfunction'
-            elif category:
-                return category
-            return 'General / Other Issues'
+            full_text = f"{title} {remark} {solution} {employee_note}".upper()
+            
+            # Check for 'ALCLFE' (WiFi 6 Serial Number prefix) or Old/New SN router upgrade remarks
+            is_wifi6_upgrade = (
+                'ALCLFE' in full_text or
+                ('WIFI 6' in full_text and ('OLD' in full_text or 'NEW' in full_text or 'UPGRADE' in full_text or 'UPGARDE' in full_text or 'SN' in full_text)) or
+                ('WIFI' in full_text and 'ALCL' in full_text)
+            )
+            
+            if is_wifi6_upgrade:
+                return 'WiFi 6 Upgrade'
+            elif 'IPTV' in full_text or 'IPTV' in category.upper():
+                return 'IPTV Issue'
+            else:
+                return 'General / Other Issues'
 
         df['Task / Issue Type'] = df.apply(classify_work_type, axis=1)
         

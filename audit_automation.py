@@ -327,36 +327,46 @@ def main():
         """
 
         # Auto-configure grid dropdowns
-        log("Auto-applying dropdown filters (AuditFor='Employee', Module='Case', Operation='Update')...")
-        for attempt in range(10):
-            step = page.evaluate(automate_selects_js, ["Employee", "Case", "Update", employee_name])
-            log(f"Select configuration status: {step}")
-            if step == "done":
-                break
-            wait_for_postback(page)
-            page.wait_for_timeout(500)
-            page.wait_for_load_state("networkidle", timeout=5000)
-            
-        # Set Dates
-        log(f"Auto-setting date inputs (From: {from_date}, To: {to_date})...")
-        dates_set = page.evaluate(set_date_inputs_js, [from_date, to_date])
-        if not dates_set:
-            log("Could not find date inputs to modify. Please adjust dates manually in browser if incorrect.", "WARNING")
-        page.wait_for_timeout(500)
-        
-        # Click search
-        log("Submitting query...")
-        searched = page.evaluate(click_search_js)
-        if searched:
-            wait_for_postback(page)
-            page.wait_for_timeout(1000)
-            page.wait_for_load_state("networkidle", timeout=8000)
+        if ',' in employee_name:
+            emp_list = [e.strip() for e in employee_name.split(',') if e.strip()]
         else:
-            log("Search button not found. Please click Search in the browser manually.", "WARNING")
-            page.wait_for_timeout(3000)
+            emp_list = [employee_name.strip()]
 
-        # Confirm data extraction ready
-        log("Checking search results table...")
+        scraped_records = []
+        
+        for emp_idx, target_emp in enumerate(emp_list):
+            log(f"--- Starting audit scrape for Employee {emp_idx+1}/{len(emp_list)}: {target_emp} ---")
+            
+            # Auto-configure grid dropdowns
+            log(f"Auto-applying dropdown filters for '{target_emp}' (AuditFor='Employee', Module='Case', Operation='Update')...")
+            for attempt in range(10):
+                step = page.evaluate(automate_selects_js, ["Employee", "Case", "Update", target_emp])
+                log(f"Select configuration status: {step}")
+                if step == "done":
+                    break
+                wait_for_postback(page)
+                page.wait_for_timeout(500)
+                page.wait_for_load_state("networkidle", timeout=5000)
+                
+            # Set Dates
+            log(f"Auto-setting date inputs (From: {from_date}, To: {to_date})...")
+            dates_set = page.evaluate(set_date_inputs_js, [from_date, to_date])
+            if not dates_set:
+                log("Could not find date inputs to modify. Please adjust dates manually in browser if incorrect.", "WARNING")
+            page.wait_for_timeout(500)
+            
+            # Click search
+            log(f"Submitting query for {target_emp}...")
+            searched = page.evaluate(click_search_js)
+            if searched:
+                wait_for_postback(page)
+                page.wait_for_timeout(1000)
+                page.wait_for_load_state("networkidle", timeout=8000)
+            else:
+                log("Search button not found. Please click Search in the browser manually.", "WARNING")
+                page.wait_for_timeout(3000)
+
+            log(f"Checking search results table for {target_emp}...")
         
         # Extraction loop injection scripts
         find_grid_table_js = r"""

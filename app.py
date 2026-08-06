@@ -321,7 +321,7 @@ if output_file and os.path.exists(output_file):
         st.markdown("<br>", unsafe_allow_html=True)
         
         # Detailed Data Tabs
-        tab1, tab2 = st.tabs(["📝 Scraped Audit Details", "📊 Raw Summary Sheet"])
+        tab1, tab2, tab3 = st.tabs(["📝 Scraped Audit Details", "🏷️ Category Analytics", "📊 Raw Summary Sheet"])
         
         with tab1:
             st.subheader("Filterable Audit Details Table")
@@ -335,6 +335,20 @@ if output_file and os.path.exists(output_file):
             st.dataframe(filtered_df, use_container_width=True, height=400)
             
         with tab2:
+            st.subheader("Category Breakdown for Total Scraped Tickets")
+            if 'Category' in df_details.columns:
+                sub_col = 'Sub Category' if 'Sub Category' in df_details.columns else ('Sub Sub Category' if 'Sub Sub Category' in df_details.columns else None)
+                group_cols = ['Category'] + ([sub_col] if sub_col else [])
+                
+                cat_counts = df_details.groupby(group_cols, dropna=False).size().reset_index(name='Total Tickets Count')
+                cat_counts = cat_counts.sort_values(by='Total Tickets Count', ascending=False)
+                
+                st.dataframe(cat_counts, use_container_width=True)
+                st.bar_chart(df_details['Category'].value_counts())
+            else:
+                st.info("No Category column found in details dataset.")
+                
+        with tab3:
             st.subheader("Summary Report Sheet View")
             df_full_summary = pd.read_excel(xls, sheet_name="Summary Report")
             st.dataframe(df_full_summary, use_container_width=True)

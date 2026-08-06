@@ -526,7 +526,7 @@ def main():
             
             for (const target of targets) {
                 const foundCell = cells.find(c => {
-                    const text = c.textContent ? c.textContent.trim().replace(/\\s+/g, ' ') : '';
+                    const text = c.textContent ? c.textContent.trim().replace(/\s+/g, ' ') : '';
                     return text === target || text === target + ':' || text === target + ' :';
                 });
                 
@@ -547,7 +547,7 @@ def main():
                 } else {
                     const divs = Array.from(container.querySelectorAll('div, span, label'));
                     const foundDiv = divs.find(d => {
-                        const text = d.textContent ? d.textContent.trim().replace(/\\s+/g, ' ') : '';
+                        const text = d.textContent ? d.textContent.trim().replace(/\s+/g, ' ') : '';
                         return (text === target || text === target + ':') && d.children.length === 0 && d.offsetWidth > 0;
                     });
                     if (foundDiv) {
@@ -558,6 +558,18 @@ def main():
                     }
                 }
             }
+
+            // Extract Solution Given / Work Log / Employee Remarks from modal text
+            let solutionGivenText = "";
+            let fullText = (container.innerText || container.textContent || "").trim();
+            
+            const solutionMatch = fullText.match(/Solution Given[\s\S]*/i);
+            if (solutionMatch) {
+                solutionGivenText = solutionMatch[0].replace(/^Solution Given\s*/i, '').replace(/Close\s*$/i, '').trim();
+            }
+            
+            data["Solution Given"] = solutionGivenText || "";
+            data["Employee Remark / Solution Note"] = solutionGivenText || fullText;
             return data;
         }
         """
@@ -951,6 +963,15 @@ def main():
         df['Resolution Type'] = [r[1] for r in res_results]
         df['Action / Transfer Remark'] = [r[2] for r in res_results]
         
+        # Ensure Employee Remark / Solution Note column is clean
+        if 'Employee Remark / Solution Note' not in df.columns:
+            df['Employee Remark / Solution Note'] = ""
+            
+        df['Employee Remark / Solution Note'] = df.apply(
+            lambda r: str(r.get('Solution Given', '')).strip() or str(r.get('Employee Remark / Solution Note', '')).strip() or str(r.get('Grid Remark', '')).strip(),
+            axis=1
+        )
+        
         solved_mask = df['Is_Solved_Or_Assigned']
         
         total_records = len(df)
@@ -960,19 +981,41 @@ def main():
         avg_assigned_duration = solved_tickets['duration_assigned'].mean()
         avg_created_duration = solved_tickets['duration_created'].mean()
         
+        # 1. Category Breakdown for Solved Tickets
         cat_group = solved_tickets.groupby(['Category', 'Sub Category'], dropna=False).agg(
             Count=('Ticket Number', 'count'),
             Avg_Duration_Assigned=('duration_assigned_sec', 'mean'),
             Avg_Duration_Created=('duration_created_sec', 'mean')
         ).reset_index()
-        
         cat_group['Avg Resolution Time (From Assigned)'] = pd.to_timedelta(cat_group['Avg_Duration_Assigned'], unit='s').apply(format_duration)
         cat_group['Avg Resolution Time (From Created)'] = pd.to_timedelta(cat_group['Avg_Duration_Created'], unit='s').apply(format_duration)
         cat_group.drop(columns=['Avg_Duration_Assigned', 'Avg_Duration_Created'], inplace=True)
         
+        # 2. TOTAL Tickets Category Breakdown (All Tickets Scraped)
+        cat_total_group = df.groupby(['Category', 'Sub Category'], dropna=False).agg(
+            Total_Tickets=('Ticket Number', 'count'),
+            Solved_Count=('Is_Solved_Or_Assigned', 'sum')
+        ).reset_index()
+        cat_total_group['Solution Rate %'] = (cat_total_group['Solved_Count'] / cat_total_group['Total_Tickets'] * 100).round(1).astype(str) + '%'
+        cat_total_group.rename(columns={
+            'Total_Tickets': 'Total Scraped Tickets',
+            'Solved_Count': 'Solved / Handled Count'
+        }, inplace=True)
+        
+        # 3. High-level Category Summary
+        cat_summary_overall = df.groupby('Category', dropna=False).agg(
+            Total_Tickets=('Ticket Number', 'count'),
+            Solved_Count=('Is_Solved_Or_Assigned', 'sum')
+        ).reset_index()
+        cat_summary_overall['Category Solution Rate %'] = (cat_summary_overall['Solved_Count'] / cat_summary_overall['Total_Tickets'] * 100).round(1).astype(str) + '%'
+        cat_summary_overall.rename(columns={
+            'Total_Tickets': 'Total Scraped Tickets',
+            'Solved_Count': 'Solved / Handled Count'
+        }, inplace=True)
+        
         solved_list_cols = [
             'Ticket Number', 'Account Name', 'Category', 'Sub Category', 
-            'Status', 'Resolution Type', 'Action / Transfer Remark',
+            'Status', 'Resolution Type', 'Employee Remark / Solution Note', 'Action / Transfer Remark',
             'Assigned Date', 'Created Date', 'Last Modified Date',
             'Resolution Time (From Assigned)', 'Resolution Time (From Created)'
         ]
@@ -1008,12 +1051,16 @@ def main():
             df_export.to_excel(writer, sheet_name="Audit Details", index=False)
             summary_metrics.to_excel(writer, sheet_name="Summary Report", index=False, startrow=0, startcol=0)
             
-            start_row_cat = len(summary_metrics) + 3
-            pd.DataFrame([["Breakdown by Ticket Category"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_cat-1, startcol=0)
-            cat_group.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_cat, startcol=0)
+            start_row_overall = len(summary_metrics) + 3
+            pd.DataFrame([["Overall Category Summary"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_overall-1, startcol=0)
+            cat_summary_overall.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_overall, startcol=0)
             
-            start_row_solved = start_row_cat + len(cat_group) + 3
-            pd.DataFrame([["Detailed Solved Tickets List"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_solved-1, startcol=0)
+            start_row_total_cat = start_row_overall + len(cat_summary_overall) + 3
+            pd.DataFrame([["Total Tickets Breakdown by Category & Sub Category"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_total_cat-1, startcol=0)
+            cat_total_group.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_total_cat, startcol=0)
+
+            start_row_solved = start_row_total_cat + len(cat_total_group) + 3
+            pd.DataFrame([["Detailed Solved / Handled Tickets List"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_solved-1, startcol=0)
             solved_list.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_solved, startcol=0)
 
         import openpyxl

@@ -914,7 +914,44 @@ def main():
         df['Resolution Time (From Created)'] = df['duration_created'].apply(format_duration)
         
         df['Status_Cleaned'] = df['Status'].astype(str).str.strip().str.capitalize()
-        solved_mask = df['Status_Cleaned'] == 'Completed'
+        
+        def classify_ticket_handling(row):
+            status_clean = str(row.get('Status', '')).strip().capitalize()
+            raw_status = str(row.get('Status', '')).strip()
+            grid_remark = str(row.get('Grid Remark', '')).strip()
+            assign_team = str(row.get('Assign Team', '')).strip()
+            assign_user = str(row.get('Assign User', '')).strip()
+            
+            remark_lower = grid_remark.lower()
+            team_lower = assign_team.lower()
+            user_lower = assign_user.lower()
+            
+            is_ms_or_transferred = (
+                'ms' in team_lower or 'ms' in user_lower or
+                'ms' in remark_lower or 'assign' in remark_lower or
+                'transfer' in remark_lower or 'forward' in remark_lower or
+                'handover' in remark_lower or 'handler' in remark_lower
+            )
+            
+            if status_clean in ['Completed', 'Closed']:
+                if is_ms_or_transferred and status_clean != 'Completed':
+                    res_type = "Assigned / Transferred to MS / Other Handler"
+                else:
+                    res_type = f"Completed ({raw_status if raw_status else 'Completed'})"
+                return True, res_type, grid_remark
+            elif is_ms_or_transferred:
+                res_type = "Assigned / Transferred to MS / Other Handler"
+                return True, res_type, grid_remark
+            else:
+                res_type = f"Other / In Progress ({raw_status if raw_status else 'Unspecified'})"
+                return False, res_type, grid_remark
+
+        res_results = df.apply(classify_ticket_handling, axis=1)
+        df['Is_Solved_Or_Assigned'] = [r[0] for r in res_results]
+        df['Resolution Type'] = [r[1] for r in res_results]
+        df['Action / Transfer Remark'] = [r[2] for r in res_results]
+        
+        solved_mask = df['Is_Solved_Or_Assigned']
         
         total_records = len(df)
         solved_tickets = df[solved_mask]
@@ -933,16 +970,19 @@ def main():
         cat_group['Avg Resolution Time (From Created)'] = pd.to_timedelta(cat_group['Avg_Duration_Created'], unit='s').apply(format_duration)
         cat_group.drop(columns=['Avg_Duration_Assigned', 'Avg_Duration_Created'], inplace=True)
         
-        solved_list = solved_tickets[[
+        solved_list_cols = [
             'Ticket Number', 'Account Name', 'Category', 'Sub Category', 
+            'Status', 'Resolution Type', 'Action / Transfer Remark',
             'Assigned Date', 'Created Date', 'Last Modified Date',
             'Resolution Time (From Assigned)', 'Resolution Time (From Created)'
-        ]].copy()
+        ]
+        solved_list_cols = [c for c in solved_list_cols if c in solved_tickets.columns]
+        solved_list = solved_tickets[solved_list_cols].copy()
         
         summary_metrics = pd.DataFrame({
             "Metric": [
                 "Total Audit Records Scraped",
-                "Total Tickets Solved (Completed)",
+                "Total Tickets Solved / Handled (Completed or MS Assigned)",
                 "Ticket Solution Rate",
                 "Average Completion Time (From Assigned Date)",
                 "Average Completion Time (From Created Date)"
@@ -959,7 +999,8 @@ def main():
         df_export = df.drop(columns=[
             'dt_assigned', 'dt_created', 'dt_completed', 
             'duration_assigned_sec', 'duration_created_sec',
-            'duration_assigned', 'duration_created', 'Status_Cleaned'
+            'duration_assigned', 'duration_created', 'Status_Cleaned',
+            'Is_Solved_Or_Assigned'
         ], errors='ignore')
         
         log(f"Writing Excel report to {output_file}...")

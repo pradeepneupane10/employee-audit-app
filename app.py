@@ -272,9 +272,9 @@ if output_file and os.path.exists(output_file):
         with col2:
             st.markdown(f"""
             <div class="kpi-card">
-                <div class="kpi-title">Solved Tickets</div>
+                <div class="kpi-title">Solved / Handled</div>
                 <div class="kpi-value">{get_val("Total Tickets Solved")}</div>
-                <div class="kpi-subtext">Completed status</div>
+                <div class="kpi-subtext">Completed or MS Assigned</div>
             </div>
             """, unsafe_allow_html=True)
             

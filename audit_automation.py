@@ -1116,20 +1116,24 @@ def main():
         style_summary_range(2, len(summary_metrics)+1, 1, 2, is_header=False)
         
         section_title_font = Font(name="Segoe UI", size=12, bold=True, color="1F4E78")
-        ws_summary.cell(row=start_row_cat, column=1).font = section_title_font
+        ws_summary.cell(row=start_row_overall, column=1).font = section_title_font
+        ws_summary.cell(row=start_row_total_cat, column=1).font = section_title_font
         ws_summary.cell(row=start_row_solved, column=1).font = section_title_font
         
-        style_summary_range(start_row_cat+1, start_row_cat+1, 1, 5, is_header=True)
-        style_summary_range(start_row_cat+2, start_row_cat+1+len(cat_group), 1, 5, is_header=False)
+        style_summary_range(start_row_overall+1, start_row_overall+1, 1, len(cat_summary_overall.columns), is_header=True)
+        style_summary_range(start_row_overall+2, start_row_overall+1+len(cat_summary_overall), 1, len(cat_summary_overall.columns), is_header=False)
         
-        style_summary_range(start_row_solved+1, start_row_solved+1, 1, 9, is_header=True)
-        style_summary_range(start_row_solved+2, start_row_solved+1+len(solved_list), 1, 9, is_header=False)
+        style_summary_range(start_row_total_cat+1, start_row_total_cat+1, 1, len(cat_total_group.columns), is_header=True)
+        style_summary_range(start_row_total_cat+2, start_row_total_cat+1+len(cat_total_group), 1, len(cat_total_group.columns), is_header=False)
+        
+        style_summary_range(start_row_solved+1, start_row_solved+1, 1, len(solved_list.columns), is_header=True)
+        style_summary_range(start_row_solved+2, start_row_solved+1+len(solved_list), 1, len(solved_list.columns), is_header=False)
         
         for col in ws_summary.columns:
             max_len = 0
             for cell in col:
                 val = str(cell.value or '')
-                if val in ["Breakdown by Ticket Category", "Detailed Solved Tickets List"]:
+                if val in ["Overall Category Summary", "Total Tickets Breakdown by Category & Sub Category", "Detailed Solved / Handled Tickets List"]:
                     continue
                 max_len = max(max_len, len(val))
             col_letter = openpyxl.utils.get_column_letter(col[0].column)
@@ -1145,14 +1149,14 @@ def main():
             print(f"{row['Metric']:<50} : {row['Value']}")
         print("-" * 80)
         print("\nBreakdown by Ticket Category:")
-        print(f"{'Category':<25} | {'Sub Category':<30} | {'Solved Count':<12} | {'Avg Res Time'}")
+        print(f"{'Category':<25} | {'Sub Category':<30} | {'Total Count':<12} | {'Solved Count'}")
         print("-" * 80)
-        for _, row in cat_group.iterrows():
+        for _, row in cat_total_group.iterrows():
             cat = str(row['Category'])[:23]
             sub = str(row['Sub Category'])[:28]
-            count = row['Count']
-            dur = row['Avg Resolution Time (From Assigned)']
-            print(f"{cat:<25} | {sub:<30} | {count:<12} | {dur}")
+            tot = row['Total Scraped Tickets']
+            cnt = row['Solved / Handled Count']
+            print(f"{cat:<25} | {sub:<30} | {tot:<12} | {cnt}")
         print("=" * 80)
         log(f"Scraped details and compiled report saved to: {output_file}")
         print("=" * 80)

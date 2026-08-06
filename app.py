@@ -309,7 +309,10 @@ with main_mode_tab1:
             progress_bar.progress(1.0, text="Scraping completed!")
             st.success("✅ Audit Scraper completed successfully!")
             
-            safe_emp = re.sub(r'[^a-zA-Z0-9]', '_', employee_name[:30])
+            if ',' in employee_name or 'ALL TEAM' in employee_name.upper():
+                safe_emp = "ALL_TEAM"
+            else:
+                safe_emp = re.sub(r'[^a-zA-Z0-9]', '_', employee_name)
             safe_from = re.sub(r'[^a-zA-Z0-9]', '_', from_date_str)
             output_file = f"audit_report_{safe_emp}_{safe_from}.xlsx"
             

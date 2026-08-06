@@ -196,7 +196,10 @@ def main():
     # Setup folders
     output_dir = os.path.dirname(os.path.abspath(__file__))
     # Format a safe filename with employee and date
-    safe_emp = re.sub(r'[^a-zA-Z0-9]', '_', employee_name)
+    if ',' in employee_name or 'ALL TEAM' in employee_name.upper():
+        safe_emp = "ALL_TEAM"
+    else:
+        safe_emp = re.sub(r'[^a-zA-Z0-9]', '_', employee_name)
     safe_from = re.sub(r'[^a-zA-Z0-9]', '_', from_date)
     output_file = os.path.join(output_dir, f"audit_report_{safe_emp}_{safe_from}.xlsx")
 
@@ -373,7 +376,6 @@ def main():
                 page.wait_for_timeout(3000)
 
             log(f"Checking search results table for {target_emp}...")
-        
         # Extraction loop injection scripts
         find_grid_table_js = r"""
         () => {
@@ -852,6 +854,7 @@ def main():
                     log("Modal did not close successfully.", "WARNING")
                 
                 combined_record = {
+                    "Target Employee": target_emp,
                     "Grid Date": row_info["date"],
                     "Grid User Name": row_info["userName"],
                     "Grid Employee Name": row_info["employeeName"],

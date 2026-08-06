@@ -117,6 +117,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Auto-ensure Playwright chromium binary is installed in cloud environment
+import subprocess
+@st.cache_resource
+def setup_playwright():
+    try:
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False)
+    except Exception:
+        pass
+    return True
+
+setup_playwright()
+
 # Import scraper from audit_automation module
 import audit_automation
 

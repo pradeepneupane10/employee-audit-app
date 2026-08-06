@@ -973,6 +973,28 @@ def main():
         df['Resolution Type'] = [r[1] for r in res_results]
         df['Action / Transfer Remark'] = [r[2] for r in res_results]
         
+        def classify_work_type(row):
+            title = str(row.get('Title', '')).strip().lower()
+            remark = str(row.get('Grid Remark', '')).strip().lower()
+            category = str(row.get('Category', '')).strip()
+            text = f"{title} {remark}".lower()
+            
+            if 'wifi 6' in text or 'wifi6' in text or 'wi-fi 6' in text or 'wifi-6' in text:
+                if 'upgrade' in text or 'upgarde' in text:
+                    return 'WiFi 6 Router Upgrade'
+                return 'WiFi 6 Setup / Issue'
+            elif 'router' in text and ('upgrade' in text or 'upgarde' in text):
+                return 'Router Upgrade (General)'
+            elif 'iptv' in text or 'tv' in text:
+                return 'IPTV Related Issue'
+            elif 'hardware' in text or 'damage' in text or 'light' in text or 'malfunction' in text:
+                return 'Hardware Damage / Malfunction'
+            elif category:
+                return category
+            return 'General / Other Issues'
+
+        df['Task / Issue Type'] = df.apply(classify_work_type, axis=1)
+        
         # Ensure Employee Remark / Solution Note column is clean
         if 'Employee Remark / Solution Note' not in df.columns:
             df['Employee Remark / Solution Note'] = ""

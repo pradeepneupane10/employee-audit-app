@@ -247,6 +247,26 @@ def build_executive_team_excel(master_df, team_summary_df, cat_summary_df):
     final_buf.seek(0)
     return final_buf.getvalue()
 
+def classify_work_type(row):
+    title = str(row.get('Title', '')).strip().lower()
+    remark = str(row.get('Grid Remark', '')).strip().lower()
+    category = str(row.get('Category', '')).strip()
+    text = f"{title} {remark}".lower()
+    
+    if 'wifi 6' in text or 'wifi6' in text or 'wi-fi 6' in text or 'wifi-6' in text:
+        if 'upgrade' in text or 'upgarde' in text:
+            return 'WiFi 6 Router Upgrade'
+        return 'WiFi 6 Setup / Issue'
+    elif 'router' in text and ('upgrade' in text or 'upgarde' in text):
+        return 'Router Upgrade (General)'
+    elif 'iptv' in text or 'tv' in text:
+        return 'IPTV Related Issue'
+    elif 'hardware' in text or 'damage' in text or 'light' in text or 'malfunction' in text:
+        return 'Hardware Damage / Malfunction'
+    elif category:
+        return category
+    return 'General / Other Issues'
+
 # Mode Selection Tabs in Main Area
 main_mode_tab1, main_mode_tab2 = st.tabs(["📊 Performance Analytics & Scraper", "📁 Combine Uploaded Reports (Manager Tool)"])
 
@@ -316,6 +336,8 @@ with main_mode_tab1:
             df_details = pd.read_excel(xls, sheet_name="Audit Details")
             df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
             
+            df_details['Task / Issue Type'] = df_details.apply(classify_work_type, axis=1)
+            
             col1, col2, col3, col4, col5 = st.columns(5)
             
             def get_val(metric_name):
@@ -383,7 +405,7 @@ with main_mode_tab1:
 
             st.markdown("<br>", unsafe_allow_html=True)
             
-            tab1, tab2, tab3 = st.tabs(["📝 Scraped Audit Details", "🏷️ Category Analytics", "📊 Raw Summary Sheet"])
+            tab1, tab2, tab3 = st.tabs(["📝 Scraped Audit Details", "🏷️ Task & Category Breakdown", "📊 Raw Summary Sheet"])
             
             with tab1:
                 st.subheader("Filterable Audit Details Table")
@@ -397,7 +419,16 @@ with main_mode_tab1:
                 st.dataframe(filtered_df, use_container_width=True, height=400)
                 
             with tab2:
-                st.subheader("Category Breakdown for Total Scraped Tickets")
+                st.subheader("Specific Task / Issue Breakdown (WiFi 6, IPTV, Router, etc.)")
+                work_counts = df_details['Task / Issue Type'].value_counts().reset_index()
+                work_counts.columns = ['Task / Issue Type', 'Total Tickets Count']
+                work_counts['% Share'] = (work_counts['Total Tickets Count'] / len(df_details) * 100).round(1).astype(str) + '%'
+                
+                st.dataframe(work_counts, use_container_width=True)
+                st.bar_chart(work_counts.set_index('Task / Issue Type')['Total Tickets Count'])
+                
+                st.markdown("---")
+                st.subheader("Portal Category & Sub-Category Breakdown")
                 if 'Category' in df_details.columns:
                     sub_col = 'Sub Category' if 'Sub Category' in df_details.columns else ('Sub Sub Category' if 'Sub Sub Category' in df_details.columns else None)
                     group_cols = ['Category'] + ([sub_col] if sub_col else [])
@@ -406,7 +437,6 @@ with main_mode_tab1:
                     cat_counts = cat_counts.sort_values(by='Total Tickets Count', ascending=False)
                     
                     st.dataframe(cat_counts, use_container_width=True)
-                    st.bar_chart(df_details['Category'].value_counts())
                 else:
                     st.info("No Category column found in details dataset.")
                     
@@ -441,7 +471,6 @@ with main_mode_tab2:
                 if "Audit Details" in xls.sheet_names:
                     df = pd.read_excel(xls, sheet_name="Audit Details")
                     
-                    # Extract employee name from filename or Grid Employee Name
                     emp_name = None
                     if "Grid Employee Name" in df.columns and not df["Grid Employee Name"].dropna().empty:
                         emp_name = df["Grid Employee Name"].dropna().iloc[0]
@@ -453,6 +482,7 @@ with main_mode_tab2:
                             emp_name = file.name.replace('.xlsx', '')
                             
                     df["Employee Name"] = emp_name
+                    df["Task / Issue Type"] = df.apply(classify_work_type, axis=1)
                     all_dfs.append(df)
             except Exception as read_err:
                 st.warning(f"Could not read {file.name}: {read_err}")
@@ -460,7 +490,6 @@ with main_mode_tab2:
         if all_dfs:
             master_df = pd.concat(all_dfs, ignore_index=True)
             
-            # Helper to classify solved status
             def is_solved(row):
                 st_val = str(row.get("Status", "")).strip().lower()
                 rm_val = str(row.get("Grid Remark", "")).strip().lower()
@@ -500,6 +529,14 @@ with main_mode_tab2:
             }])
             team_summary_df = pd.concat([team_summary_df, total_team_row], ignore_index=True)
             
+            # Task / Issue Breakdown Calculation
+            work_summary_df = master_df.groupby("Task / Issue Type", dropna=False).agg(
+                Total_Tickets=("Ticket Number", "count"),
+                Solved_Count=("Is_Solved_Val", "sum")
+            ).reset_index()
+            work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
+            work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(master_df) * 100).round(1).astype(str) + '%'
+            
             # Category Summary Calculation
             cat_summary_df = master_df.groupby("Category", dropna=False).agg(
                 Total_Tickets=("Ticket Number", "count"),
@@ -507,10 +544,8 @@ with main_mode_tab2:
             ).reset_index()
             cat_summary_df["Solution Rate %"] = (cat_summary_df["Solved_Count"] / cat_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
             
-            # Clean export master df
             export_master = master_df.drop(columns=["Is_Solved_Val"], errors="ignore")
             
-            # Display Team Analytics
             st.markdown("### 🏆 Executive Team Performance Summary")
             
             c1, c2, c3 = st.columns(3)
@@ -524,14 +559,18 @@ with main_mode_tab2:
             st.markdown("#### Employee Workload & Performance Comparison")
             st.dataframe(team_summary_df, use_container_width=True)
             
+            st.markdown("---")
+            st.markdown("### 🏷️ Specific Task & Issue Breakdown (WiFi 6 Upgrades, IPTV, Hardware, etc.)")
+            st.dataframe(work_summary_df, use_container_width=True)
+            st.bar_chart(work_summary_df.set_index("Task / Issue Type")["Total_Tickets"])
+            
             st.markdown("#### Tickets Workload per Employee")
             st.bar_chart(team_summary_df[team_summary_df["Employee Name"] != "👥 GRAND TOTAL (ALL TEAM)"].set_index("Employee Name")["Total Scraped Tickets"])
             
             st.markdown("#### Combined Filterable Master Audit Table")
             st.dataframe(export_master, use_container_width=True, height=400)
             
-            # Build downloadable Excel
-            excel_bytes = build_executive_team_excel(export_master, team_summary_df, cat_summary_df)
+            excel_bytes = build_executive_team_excel(export_master, team_summary_df, work_summary_df)
             today_filename_str = datetime.now().strftime("%d_%b_%Y")
             exec_file_name = f"EXECUTIVE_TEAM_AUDIT_REPORT_{today_filename_str}.xlsx"
             

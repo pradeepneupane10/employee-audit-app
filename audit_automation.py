@@ -56,6 +56,12 @@ def wait_for_postback(page, timeout_ms=8000):
     except Exception:
         page.wait_for_timeout(500)
 
+def safe_wait_for_networkidle(page, timeout_ms=5000):
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    except Exception:
+        pass
+
 def format_duration(td):
     if pd.isna(td) or not isinstance(td, timedelta):
         return "N/A"
@@ -209,7 +215,7 @@ def main():
         log(f"Navigating to {login_url}...")
         try:
             page.goto(login_url, timeout=60000)
-            page.wait_for_load_state("networkidle")
+            safe_wait_for_networkidle(page, 10000)
         except Exception as e:
             log(f"Navigation issue: {e}", "WARNING")
             
@@ -220,7 +226,7 @@ def main():
         log(f"Navigating to {target_url}...")
         try:
             page.goto(target_url, timeout=30000)
-            page.wait_for_load_state("networkidle")
+            safe_wait_for_networkidle(page, 10000)
         except Exception as e:
             log(f"Could not load audit page: {e}", "ERROR")
             browser.close()
@@ -346,7 +352,7 @@ def main():
                     break
                 wait_for_postback(page)
                 page.wait_for_timeout(500)
-                page.wait_for_load_state("networkidle", timeout=5000)
+                safe_wait_for_networkidle(page, 5000)
                 
             # Set Dates
             log(f"Auto-setting date inputs (From: {from_date}, To: {to_date})...")
@@ -361,7 +367,7 @@ def main():
             if searched:
                 wait_for_postback(page)
                 page.wait_for_timeout(1000)
-                page.wait_for_load_state("networkidle", timeout=8000)
+                safe_wait_for_networkidle(page, 8000)
             else:
                 log("Search button not found. Please click Search in the browser manually.", "WARNING")
                 page.wait_for_timeout(3000)

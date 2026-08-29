@@ -335,47 +335,6 @@ def main():
         }
         """
 
-        # Auto-configure grid dropdowns
-        if ',' in employee_name:
-            emp_list = [e.strip() for e in employee_name.split(',') if e.strip()]
-        else:
-            emp_list = [employee_name.strip()]
-
-        scraped_records = []
-        
-        for emp_idx, target_emp in enumerate(emp_list):
-            log(f"--- Starting audit scrape for Employee {emp_idx+1}/{len(emp_list)}: {target_emp} ---")
-            
-            # Auto-configure grid dropdowns
-            log(f"Auto-applying dropdown filters for '{target_emp}' (AuditFor='Employee', Module='Case', Operation='Update')...")
-            for attempt in range(10):
-                step = page.evaluate(automate_selects_js, ["Employee", "Case", "Update", target_emp])
-                log(f"Select configuration status: {step}")
-                if step == "done":
-                    break
-                wait_for_postback(page)
-                page.wait_for_timeout(500)
-                safe_wait_for_networkidle(page, 5000)
-                
-            # Set Dates
-            log(f"Auto-setting date inputs (From: {from_date}, To: {to_date})...")
-            dates_set = page.evaluate(set_date_inputs_js, [from_date, to_date])
-            if not dates_set:
-                log("Could not find date inputs to modify. Please adjust dates manually in browser if incorrect.", "WARNING")
-            page.wait_for_timeout(500)
-            
-            # Click search
-            log(f"Submitting query for {target_emp}...")
-            searched = page.evaluate(click_search_js)
-            if searched:
-                wait_for_postback(page)
-                page.wait_for_timeout(1000)
-                safe_wait_for_networkidle(page, 8000)
-            else:
-                log("Search button not found. Please click Search in the browser manually.", "WARNING")
-                page.wait_for_timeout(3000)
-
-            log(f"Checking search results table for {target_emp}...")
         # Extraction loop injection scripts
         find_grid_table_js = r"""
         () => {
@@ -652,13 +611,19 @@ def main():
             if (!gridTable) return false;
             
             const links = Array.from(gridTable.querySelectorAll('a'));
+            
+            // 1. Check for exact page number
             let targetLink = links.find(el => {
                 const txt = el.textContent.trim();
-                return txt === pageNumStr && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled');
+                return txt === String(pageNumStr) && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled');
             });
             
+            // 2. If page number not directly visible, click the trailing ellipsis (Next set of 10 pages)
             if (!targetLink) {
-                targetLink = links.find(el => el.textContent.trim() === '...' && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled'));
+                const ellipsisLinks = links.filter(el => el.textContent.trim() === '...' && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled'));
+                if (ellipsisLinks.length > 0) {
+                    targetLink = ellipsisLinks[ellipsisLinks.length - 1];
+                }
             }
             
             if (targetLink) {
@@ -669,251 +634,229 @@ def main():
         }
         """
 
+        # Prepare list of target employees
+        if ',' in employee_name:
+            emp_list = [e.strip() for e in employee_name.split(',') if e.strip()]
+        else:
+            emp_list = [employee_name.strip()]
+
         scraped_records = []
-        page_num = 1
         
-        # Diagnostic: List all tables found on the page
-        try:
-            tables_info = page.evaluate("""
-            () => {
-                return Array.from(document.querySelectorAll('table')).map((t, idx) => ({
-                    index: idx,
-                    id: t.id,
-                    className: t.className,
-                    innerTextSummary: (t.innerText || '').substring(0, 150).replace(/\\s+/g, ' ')
-                }));
-            }
-            """)
-            log(f"Tables found on the page: {tables_info}")
-        except Exception as diag_err:
-            log(f"Failed to run tables diagnostic: {diag_err}", "WARNING")
-
-        # Diagnostic: print date cell HTML details
-        try:
-            cell_html = page.evaluate("""
-            () => {
-                const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory');
-                if (!gridTable) return 'no grid';
-                const rows = Array.from(gridTable.querySelectorAll('tr'));
-                const dataRows = rows.filter(r => r.querySelectorAll('td').length >= 5 && r.querySelectorAll('td')[0].textContent.trim().toLowerCase() !== 'date');
-                if (dataRows.length === 0) return 'no data rows';
-                const cell = dataRows[0].querySelectorAll('td')[0];
-                return {
-                    cellHTML: cell.outerHTML,
-                    anchorHTML: (cell.querySelector('a') || {}).outerHTML || 'no anchor'
-                };
-            }
-            """)
-            log(f"Date cell HTML diagnostic: {cell_html}")
-        except Exception as cell_err:
-            log(f"Failed to run cell diagnostic: {cell_err}", "WARNING")
-
-        # Safe-guard if search is slow
-        try:
-            page.locator('table').first.wait_for(state="visible", timeout=6000)
-        except Exception:
-            pass
-
-        while True:
-            log(f"Scanning page {page_num}...")
+        for emp_idx, target_emp in enumerate(emp_list):
+            log(f"============================================================")
+            log(f"--- Starting audit scrape for Employee {emp_idx+1}/{len(emp_list)}: {target_emp} ---")
+            log(f"============================================================")
             
-            # Print page frame diagnostics
+            # Auto-configure grid dropdowns
+            log(f"Auto-applying dropdown filters for '{target_emp}' (AuditFor='Employee', Module='Case', Operation='Update')...")
+            for attempt in range(10):
+                step = page.evaluate(automate_selects_js, ["Employee", "Case", "Update", target_emp])
+                log(f"Select configuration status: {step}")
+                if step == "done":
+                    break
+                wait_for_postback(page)
+                page.wait_for_timeout(500)
+                safe_wait_for_networkidle(page, 5000)
+                
+            # Set Dates
+            log(f"Auto-setting date inputs (From: {from_date}, To: {to_date})...")
+            dates_set = page.evaluate(set_date_inputs_js, [from_date, to_date])
+            if not dates_set:
+                log("Could not find date inputs to modify. Please adjust dates manually in browser if incorrect.", "WARNING")
+            page.wait_for_timeout(500)
+            
+            # Click search
+            log(f"Submitting query for {target_emp}...")
+            searched = page.evaluate(click_search_js)
+            if searched:
+                wait_for_postback(page)
+                page.wait_for_timeout(1500)
+                safe_wait_for_networkidle(page, 8000)
+            else:
+                log("Search button not found. Please click Search in the browser manually.", "WARNING")
+                page.wait_for_timeout(3000)
+
+            # Safe-guard if search is slow
             try:
-                log(f"Total frames on the page: {len(page.frames)}")
-                for idx, frame in enumerate(page.frames):
-                    log(f"Frame [{idx}] - Name: '{frame.name}' | URL: {frame.url}")
-            except Exception as frame_diag_err:
-                log(f"Failed to run frame diagnostics: {frame_diag_err}", "WARNING")
-            
-            has_grid = page.evaluate(find_grid_table_js)
-            if not has_grid:
-                log("Grid table not found! Wait 2 seconds and check again...", "WARNING")
-                page.wait_for_timeout(2000)
+                page.locator('table').first.wait_for(state="visible", timeout=6000)
+            except Exception:
+                pass
+
+            page_num = 1
+            while True:
+                log(f"[{target_emp}] Scanning page {page_num}...")
+                
                 has_grid = page.evaluate(find_grid_table_js)
                 if not has_grid:
-                    log("Grid table not found! Ensure the search results are displayed.", "ERROR")
-                    try:
-                        page.screenshot(path="grid_error_debug.png")
-                        log("Saved debug screenshot to grid_error_debug.png")
-                    except Exception as screenshot_err:
-                        log(f"Failed to capture grid screenshot: {screenshot_err}", "WARNING")
+                    log("Grid table not found! Wait 2 seconds and check again...", "WARNING")
+                    page.wait_for_timeout(2000)
+                    has_grid = page.evaluate(find_grid_table_js)
+                    if not has_grid:
+                        log(f"No grid table found for {target_emp}.", "INFO")
+                        break
+                    
+                rows_count = page.evaluate(get_rows_count_js)
+                log(f"[{target_emp}] Found {rows_count} records on page {page_num}.")
+                
+                if rows_count == 0:
+                    log(f"[{target_emp}] No data records found on page {page_num}.")
                     break
-                
-            rows_count = page.evaluate(get_rows_count_js)
-            log(f"Found {rows_count} records on page {page_num}.")
-            
-            if rows_count == 0:
-                log("No data records found on this page.")
-                break
-                
-            for i in range(rows_count):
-                row_info = page.evaluate(get_row_data_js, i)
-                if not row_info:
-                    log(f"Failed to fetch row data for index {i}", "WARNING")
-                    continue
                     
-                log(f"Processing Record {i+1}/{rows_count} on Page {page_num}: Date={row_info['date']}, Remark={row_info['remark']}")
-                
-                # Wait for any lingering page postbacks before click
-                wait_for_postback(page)
-                page.wait_for_timeout(300)
+                for i in range(rows_count):
+                    row_info = page.evaluate(get_row_data_js, i)
+                    if not row_info:
+                        log(f"[{target_emp}] Could not extract row info for record index {i+1}", "WARNING")
+                        continue
+                    
+                    log(f"[{target_emp}] Record {i+1}/{rows_count} (Page {page_num}): Date='{row_info['date']}' | User='{row_info['userName']}' | Employee='{row_info['employeeName']}' | Remark='{row_info['remark']}'")
+                    
+                    # Click row link to open modal
+                    clicked = page.evaluate(click_row_link_js, i)
+                    if not clicked:
+                        log(f"[{target_emp}] Failed to click popup link for row {i+1}", "WARNING")
+                        continue
+                    
+                    # Wait for ASP.NET postback
+                    wait_for_postback(page)
+                    page.wait_for_timeout(400)
+                    
+                    # Wait for modal frame to appear
+                    modal_frame = None
+                    for _ in range(25):
+                        for frame in page.frames:
+                            try:
+                                has_header = frame.evaluate(r"""
+                                () => {
+                                    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
+                                        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
+                                    );
+                                    return headers.length > 0;
+                                }
+                                """)
+                                if has_header:
+                                    modal_frame = frame
+                                    break
+                            except Exception:
+                                pass
+                        if modal_frame:
+                            break
+                        page.wait_for_timeout(200)
 
-                # Click the Date cell to open popup
-                clicked = page.evaluate(click_row_date_js, i)
-                if not clicked:
-                    log(f"Could not click Date cell for row {i}", "ERROR")
-                    continue
-                
-                # Wait for the click postback to complete
-                wait_for_postback(page)
-                    
-                # Wait for Case Information modal to open inside the iframe
-                modal_frame = None
-                for _ in range(30):
-                    frame = page.frame(name="ContentPlaceHolder1_ifrm")
-                    if frame:
+                    if not modal_frame:
+                        log(f"[{target_emp}] Timeout waiting for 'Case Information' popup to open inside iframe for record {i+1}", "WARNING")
                         try:
-                            # Verify if frame contains the Case Information header
-                            has_header = frame.evaluate("""
-                            () => {
-                                const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-                                    el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-                                );
-                                return headers.length > 0;
-                            }
-                            """)
-                            if has_header:
-                                modal_frame = frame
-                                break
+                            frame = page.frame(name="ContentPlaceHolder1_ifrm")
+                            if frame:
+                                frame.evaluate(close_modal_js)
                         except Exception:
                             pass
-                    page.wait_for_timeout(200)
-
-                if not modal_frame:
-                    log(f"Timeout waiting for 'Case Information' popup to open inside iframe for record {i+1}", "ERROR")
+                        continue
+                    
+                    page.wait_for_timeout(300)
+                    
+                    # Scroll modal inside the frame
                     try:
-                        page.screenshot(path=f"popup_error_{i}.png")
-                        log(f"Saved debug screenshot to popup_error_{i}.png")
-                    except Exception as screenshot_err:
-                        log(f"Failed to capture popup error screenshot: {screenshot_err}", "WARNING")
-                    try:
-                        frame = page.frame(name="ContentPlaceHolder1_ifrm")
-                        if frame:
-                            frame.evaluate(close_modal_js)
+                        modal_frame.evaluate(scroll_modal_js)
                     except Exception:
                         pass
-                    continue
-                
-                page.wait_for_timeout(300)
-                
-                # Scroll modal inside the frame
-                try:
-                    modal_frame.evaluate(scroll_modal_js)
-                except Exception as scroll_err:
-                    log(f"Scroll error: {scroll_err}", "WARNING")
-                page.wait_for_timeout(200)
-                
-                # Extract details from the frame
-                modal_data = {}
-                try:
-                    modal_data = modal_frame.evaluate(extract_modal_data_js)
-                except Exception as extract_err:
-                    log(f"Extraction error: {extract_err}", "ERROR")
-                
-                # Close the modal inside the frame
-                closed = False
-                try:
-                    closed = modal_frame.evaluate(close_modal_js)
-                except Exception:
-                    pass
+                    page.wait_for_timeout(200)
                     
-                if not closed:
+                    # Extract details from the frame
+                    modal_data = {}
                     try:
-                        modal_frame.locator('text=Close').first.click(timeout=2000)
+                        modal_data = modal_frame.evaluate(extract_modal_data_js)
+                    except Exception as extract_err:
+                        log(f"Extraction error: {extract_err}", "ERROR")
+                    
+                    # Close the modal inside the frame
+                    closed = False
+                    try:
+                        closed = modal_frame.evaluate(close_modal_js)
                     except Exception:
-                        log("Could not close the modal.", "ERROR")
-                
-                # Wait for close postback to complete
-                wait_for_postback(page)
-                page.wait_for_timeout(300)
-                
-                # Wait for Case Information modal to close (polling iframe visibility on main page)
-                modal_closed = False
-                for _ in range(25):
-                    try:
-                        is_visible = page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible()
-                        if not is_visible:
+                        pass
+                        
+                    if not closed:
+                        try:
+                            modal_frame.locator('text=Close').first.click(timeout=2000)
+                        except Exception:
+                            log("Could not close the modal.", "ERROR")
+                    
+                    # Wait for close postback to complete
+                    wait_for_postback(page)
+                    page.wait_for_timeout(300)
+                    
+                    modal_closed = False
+                    for _ in range(25):
+                        try:
+                            is_visible = page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible()
+                            if not is_visible:
+                                modal_closed = True
+                                break
+                        except Exception:
                             modal_closed = True
                             break
-                    except Exception:
-                        modal_closed = True
-                        break
-                    page.wait_for_timeout(200)
+                        page.wait_for_timeout(200)
 
-                if not modal_closed:
-                    log("Modal did not close successfully.", "WARNING")
-                
-                combined_record = {
-                    "Target Employee": target_emp,
-                    "Grid Date": row_info["date"],
-                    "Grid User Name": row_info["userName"],
-                    "Grid Employee Name": row_info["employeeName"],
-                    "Grid Module": row_info["moduleName"],
-                    "Grid Operation": row_info["operation"],
-                    "Grid IP Address": row_info["ipAddress"],
-                    "Grid Remark": row_info["remark"],
-                    **modal_data
-                }
-                scraped_records.append(combined_record)
-                
-                page.wait_for_timeout(300)
-                
-            # Check pagination
-            pagination_items = page.evaluate(get_pagination_info_js)
-            if not pagination_items:
-                log("No pagination elements found. Single page audit.")
-                break
-                
-            log(f"Pagination structure: {pagination_items}")
-            active_item = next((item for item in pagination_items if item["active"]), None)
-            if not active_item:
-                log("No active page marked. Assuming page iteration completed.", "WARNING")
-                break
-                
-            current_page_val = int(active_item["text"])
-            next_page_val = current_page_val + 1
-            
-            next_page_item = next((item for item in pagination_items if item["text"] == str(next_page_val)), None)
-            if not next_page_item:
-                next_page_item = next((item for item in pagination_items if item["text"] == "..."), None)
-
-            if next_page_item and next_page_item["clickable"]:
-                log(f"Navigating to next page: Page {next_page_val}...")
-                
-                first_row_before = page.evaluate(get_row_data_js, 0)
-                date_before = first_row_before["date"] if first_row_before else ""
-                
-                page.evaluate(click_page_js, str(next_page_val))
-                
-                try:
-                    page.wait_for_timeout(2000)
-                    page.wait_for_load_state("networkidle", timeout=5000)
-                except Exception:
-                    pass
-                
-                post_pagination = page.evaluate(get_pagination_info_js)
-                new_active = next((item for item in post_pagination if item["active"]), None) if post_pagination else None
-                first_row_after = page.evaluate(get_row_data_js, 0)
-                date_after = first_row_after["date"] if first_row_after else ""
-                
-                if (new_active and int(new_active["text"]) == next_page_val) or (date_before != date_after):
-                    page_num = next_page_val
-                else:
-                    log(f"Page transition verification failed. Expected Page {next_page_val}.", "WARNING")
+                    combined_record = {
+                        "Target Employee": target_emp,
+                        "Grid Date": row_info["date"],
+                        "Grid User Name": row_info["userName"],
+                        "Grid Employee Name": row_info["employeeName"],
+                        "Grid Module": row_info["moduleName"],
+                        "Grid Operation": row_info["operation"],
+                        "Grid IP Address": row_info["ipAddress"],
+                        "Grid Remark": row_info["remark"],
+                        **modal_data
+                    }
+                    scraped_records.append(combined_record)
+                    page.wait_for_timeout(300)
+                    
+                # Check pagination
+                pagination_items = page.evaluate(get_pagination_info_js)
+                if not pagination_items:
+                    log(f"[{target_emp}] No pagination elements found. Single page audit.")
                     break
-            else:
-                log(f"No clickable link for Page {next_page_val} found. Reached end of pagination.")
-                break
+                    
+                active_item = next((item for item in pagination_items if item["active"]), None)
+                if not active_item:
+                    log(f"[{target_emp}] No active page marked. Assuming page iteration completed.", "INFO")
+                    break
+                    
+                current_page_val = int(active_item["text"]) if active_item["text"].isdigit() else page_num
+                next_page_val = current_page_val + 1
+                
+                # Check for direct next page number link or trailing ellipsis '...'
+                has_next_number = any(item["text"] == str(next_page_val) and item["clickable"] for item in pagination_items)
+                has_next_ellipsis = any(item["text"] == "..." and item["clickable"] for item in pagination_items)
+                
+                if has_next_number or has_next_ellipsis:
+                    log(f"[{target_emp}] Navigating to next page: Page {next_page_val}...")
+                    
+                    first_row_before = page.evaluate(get_row_data_js, 0)
+                    date_before = first_row_before["date"] if first_row_before else ""
+                    
+                    page.evaluate(click_page_js, str(next_page_val))
+                    wait_for_postback(page)
+                    page.wait_for_timeout(1500)
+                    safe_wait_for_networkidle(page, 6000)
+                    
+                    post_pagination = page.evaluate(get_pagination_info_js)
+                    new_active = next((item for item in post_pagination if item["active"]), None) if post_pagination else None
+                    first_row_after = page.evaluate(get_row_data_js, 0)
+                    date_after = first_row_after["date"] if first_row_after else ""
+                    
+                    if (new_active and new_active["text"].isdigit() and int(new_active["text"]) >= next_page_val) or (date_before != date_after):
+                        page_num = int(new_active["text"]) if (new_active and new_active["text"].isdigit()) else next_page_val
+                        log(f"[{target_emp}] Loaded Page {page_num} successfully.")
+                    else:
+                        log(f"[{target_emp}] Completed all available pages up to Page {current_page_val}.", "INFO")
+                        break
+                else:
+                    log(f"[{target_emp}] Reached the last page (Page {current_page_val}). All pages extracted successfully.")
+                    break
+            
+            log(f"✓ Finished scraping all audit records for {target_emp}.")
+            page.wait_for_timeout(1000)
                 
         log("Scraping completed. Closing browser.")
         browser.close()

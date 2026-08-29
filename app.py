@@ -176,7 +176,11 @@ with st.sidebar:
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
     
-    date_preset = st.radio("Quick Range", ["Today", "Yesterday & Today (2 Days)", "Last 7 Days", "Custom Range"], index=1)
+    date_preset = st.radio(
+        "Quick Range", 
+        ["Today", "Yesterday & Today (2 Days)", "Last 7 Days", "Last 30 Days", "Full Current Month", "Previous Month", "Custom Range"], 
+        index=1
+    )
     
     if date_preset == "Today":
         from_date_obj = today
@@ -187,6 +191,17 @@ with st.sidebar:
     elif date_preset == "Last 7 Days":
         from_date_obj = today - timedelta(days=6)
         to_date_obj = today
+    elif date_preset == "Last 30 Days":
+        from_date_obj = today - timedelta(days=29)
+        to_date_obj = today
+    elif date_preset == "Full Current Month":
+        from_date_obj = today.replace(day=1)
+        to_date_obj = today
+    elif date_preset == "Previous Month":
+        first_day_curr = today.replace(day=1)
+        last_day_prev = first_day_curr - timedelta(days=1)
+        from_date_obj = last_day_prev.replace(day=1)
+        to_date_obj = last_day_prev
     else:
         col_d1, col_d2 = st.columns(2)
         with col_d1:
@@ -194,8 +209,8 @@ with st.sidebar:
         with col_d2:
             to_date_obj = st.date_input("To Date", value=today)
 
-    from_date_str = from_date_obj.strftime("%d %b %Y")  # e.g., "04 Aug 2026"
-    to_date_str = to_date_obj.strftime("%d %b %Y")      # e.g., "05 Aug 2026"
+    from_date_str = from_date_obj.strftime("%d %b %Y")  # e.g., "01 Aug 2026"
+    to_date_str = to_date_obj.strftime("%d %b %Y")      # e.g., "31 Aug 2026"
 
     st.markdown(f"**Target Period:** `{from_date_str}` to `{to_date_str}`")
     st.markdown("---")

@@ -242,53 +242,82 @@ def main():
             
             // 1. Audit For
             const auditForSelect = selects.find(s => 
-                Array.from(s.options).some(o => o.text.trim() === auditFor || o.value.trim() === auditFor)
+                Array.from(s.options).some(o => o.text.trim().toLowerCase() === auditFor.toLowerCase() || o.value.trim().toLowerCase() === auditFor.toLowerCase())
             );
             if (auditForSelect) {
-                const opt = Array.from(auditForSelect.options).find(o => o.text.trim() === auditFor || o.value.trim() === auditFor);
-                if (auditForSelect.value !== opt.value) {
+                const opt = Array.from(auditForSelect.options).find(o => o.text.trim().toLowerCase() === auditFor.toLowerCase() || o.value.trim().toLowerCase() === auditFor.toLowerCase());
+                if (opt && auditForSelect.value !== opt.value) {
                     auditForSelect.value = opt.value;
-                    auditForSelect.dispatchEvent(new Event('change'));
+                    auditForSelect.dispatchEvent(new Event('change', { bubbles: true }));
                     return "auditFor";
                 }
             }
             
             // 2. Module
             const moduleSelect = selects.find(s => 
-                Array.from(s.options).some(o => o.text.trim() === moduleVal || o.value.trim() === moduleVal)
+                Array.from(s.options).some(o => o.text.trim().toLowerCase() === moduleVal.toLowerCase() || o.value.trim().toLowerCase() === moduleVal.toLowerCase())
             );
             if (moduleSelect) {
-                const opt = Array.from(moduleSelect.options).find(o => o.text.trim() === moduleVal || o.value.trim() === moduleVal);
-                if (moduleSelect.value !== opt.value) {
+                const opt = Array.from(moduleSelect.options).find(o => o.text.trim().toLowerCase() === moduleVal.toLowerCase() || o.value.trim().toLowerCase() === moduleVal.toLowerCase());
+                if (opt && moduleSelect.value !== opt.value) {
                     moduleSelect.value = opt.value;
-                    moduleSelect.dispatchEvent(new Event('change'));
+                    moduleSelect.dispatchEvent(new Event('change', { bubbles: true }));
                     return "module";
                 }
             }
             
             // 3. Operation
             const operationSelect = selects.find(s => 
-                Array.from(s.options).some(o => o.text.trim() === operationVal || o.value.trim() === operationVal)
+                Array.from(s.options).some(o => o.text.trim().toLowerCase() === operationVal.toLowerCase() || o.value.trim().toLowerCase() === operationVal.toLowerCase())
             );
             if (operationSelect) {
-                const opt = Array.from(operationSelect.options).find(o => o.text.trim() === operationVal || o.value.trim() === operationVal);
-                if (operationSelect.value !== opt.value) {
+                const opt = Array.from(operationSelect.options).find(o => o.text.trim().toLowerCase() === operationVal.toLowerCase() || o.value.trim().toLowerCase() === operationVal.toLowerCase());
+                if (opt && operationSelect.value !== opt.value) {
                     operationSelect.value = opt.value;
-                    operationSelect.dispatchEvent(new Event('change'));
+                    operationSelect.dispatchEvent(new Event('change', { bubbles: true }));
                     return "operation";
                 }
             }
             
-            // 4. Employee (UserWise dropdown)
+            // 4. Employee (UserWise dropdown) - robust case-insensitive substring & whitespace normalized matching
+            const cleanTarget = employeeVal.toLowerCase().replace(/\s+/g, ' ').trim();
             const employeeSelect = selects.find(s => 
-                Array.from(s.options).some(o => o.text.trim().toLowerCase().includes(employeeVal.toLowerCase()))
+                Array.from(s.options).some(o => {
+                    const cleanOpt = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
+                    return cleanOpt.includes(cleanTarget) || cleanTarget.includes(cleanOpt);
+                })
             );
             if (employeeSelect) {
-                const opt = Array.from(employeeSelect.options).find(o => o.text.trim().toLowerCase().includes(employeeVal.toLowerCase()));
+                const opt = Array.from(employeeSelect.options).find(o => {
+                    const cleanOpt = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
+                    return cleanOpt.includes(cleanTarget) || cleanTarget.includes(cleanOpt);
+                });
                 if (opt && employeeSelect.value !== opt.value) {
                     employeeSelect.value = opt.value;
-                    employeeSelect.dispatchEvent(new Event('change'));
+                    employeeSelect.dispatchEvent(new Event('change', { bubbles: true }));
                     return "employee";
+                }
+            }
+            
+            // 5. Select DateWise radio button if present
+            const dateWiseRadio = document.getElementById('ContentPlaceHolder1_rdbdat_0') || 
+                                  document.querySelector('input[type="radio"][value*="Date" i], input[type="radio"][id*="dat" i]');
+            if (dateWiseRadio && !dateWiseRadio.checked) {
+                dateWiseRadio.click();
+                dateWiseRadio.checked = true;
+                dateWiseRadio.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            // 6. Page Size dropdown - select 500 Records / highest batch size
+            const pageSizeSelect = document.getElementById('ContentPlaceHolder1_ddlPageSize') || selects.find(s => 
+                Array.from(s.options).some(o => o.text.includes('Records') || o.text.includes('500') || o.text.includes('200'))
+            );
+            if (pageSizeSelect) {
+                const optMax = Array.from(pageSizeSelect.options).find(o => o.text.includes('500') || o.text.includes('200') || o.text.includes('100'));
+                if (optMax && pageSizeSelect.value !== optMax.value) {
+                    pageSizeSelect.value = optMax.value;
+                    pageSizeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                    return "pageSize";
                 }
             }
             
@@ -303,13 +332,15 @@ def main():
             
             if (fromInput) {
                 fromInput.value = fromDateStr;
-                fromInput.dispatchEvent(new Event('change'));
-                fromInput.dispatchEvent(new Event('blur'));
+                fromInput.dispatchEvent(new Event('input', { bubbles: true }));
+                fromInput.dispatchEvent(new Event('change', { bubbles: true }));
+                fromInput.dispatchEvent(new Event('blur', { bubbles: true }));
             }
             if (toInput) {
                 toInput.value = toDateStr;
-                toInput.dispatchEvent(new Event('change'));
-                toInput.dispatchEvent(new Event('blur'));
+                toInput.dispatchEvent(new Event('input', { bubbles: true }));
+                toInput.dispatchEvent(new Event('change', { bubbles: true }));
+                toInput.dispatchEvent(new Event('blur', { bubbles: true }));
             }
             return !!(fromInput && toInput);
         }

@@ -403,7 +403,7 @@ def main():
         }
         """
         
-        click_row_date_js = r"""
+        click_row_date_js = click_row_link_js = r"""
         (rowIndex) => {
             const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
                               document.querySelector('table[id*="gdhistory" i]') || 

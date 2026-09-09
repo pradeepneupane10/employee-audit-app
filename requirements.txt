@@ -2,5 +2,4 @@ streamlit
 pandas
 openpyxl
 python-dateutil
-playwright-stealth
-webdriver-manager
+playwright

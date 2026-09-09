@@ -16,6 +16,14 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 
+try:
+    if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 # Set Streamlit Page Configuration for Mobile & Desktop
 st.set_page_config(
     page_title="CGNET Employee Audit Portal",
@@ -117,20 +125,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Auto-ensure Playwright chromium binary is installed in cloud environment
+# Ensure Playwright chromium binary is installed
 import subprocess
 @st.cache_resource
 def setup_playwright():
+    # If system chromium exists (e.g. from packages.txt on Debian / Streamlit Cloud), skip download
+    for p in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
+        if os.path.exists(p):
+            return True
     try:
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False)
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False, timeout=60)
     except Exception:
         pass
     return True
 
 setup_playwright()
-
-# Import scraper from audit_automation module
-import audit_automation
 
 # Title Banner
 st.markdown("""
@@ -303,44 +312,75 @@ with main_mode_tab1:
             log_html = "<br>".join(logs_list[-8:])
             log_container.markdown(f'<div class="status-box">{log_html}</div>', unsafe_allow_html=True)
 
-        progress_bar = st.progress(0.1, text="Initializing Playwright browser...")
+        progress_bar = st.progress(0.1, text="Starting Scraper process...")
 
         try:
-            sys.argv = [
-                "audit_automation.py",
+            script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "audit_automation.py")
+            cmd = [
+                sys.executable,
+                script_path,
                 "--employee", employee_name,
                 "--from-date", from_date_str,
                 "--to-date", to_date_str,
                 "--non-interactive"
             ]
             
-            import subprocess
-            try:
-                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False)
-            except Exception:
-                pass
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["HEADLESS"] = "true"
 
-            audit_automation.main()
+            ui_log(f"Spawning scraper process for {employee_name} ({from_date_str} to {to_date_str})...")
             
-            progress_bar.progress(1.0, text="Scraping completed!")
-            st.success("✅ Audit Scraper completed successfully!")
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                env=env
+            )
             
-            if ',' in employee_name or 'ALL TEAM' in employee_name.upper():
-                safe_emp = "ALL_TEAM"
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    clean_line = line.strip()
+                    if clean_line:
+                        ui_log(clean_line)
+                        if "Navigating to" in clean_line:
+                            progress_bar.progress(0.25, text="Connecting to CGNET portal...")
+                        elif "Logged in successfully" in clean_line:
+                            progress_bar.progress(0.45, text="Logged in, loading Audit page...")
+                        elif "Scraping page" in clean_line or "Found" in clean_line:
+                            progress_bar.progress(0.70, text="Scraping records...")
+                        elif "compiled report saved" in clean_line:
+                            progress_bar.progress(0.90, text="Generating Excel report...")
+
+            return_code = process.poll()
+            
+            if return_code != 0:
+                st.error(f"❌ Scraper process finished with exit code {return_code}. Review the logs above.")
             else:
-                safe_emp = re.sub(r'[^a-zA-Z0-9]', '_', employee_name)
-            safe_from = re.sub(r'[^a-zA-Z0-9]', '_', from_date_str)
-            output_file = f"audit_report_{safe_emp}_{safe_from}.xlsx"
-            
-            if os.path.exists(output_file):
-                st.session_state["last_output_file"] = output_file
-                st.session_state["last_run_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                import glob
-                matching_files = glob.glob(f"audit_report_*{safe_from}*.xlsx")
-                if matching_files:
-                    st.session_state["last_output_file"] = matching_files[0]
+                progress_bar.progress(1.0, text="Scraping completed!")
+                st.success("✅ Audit Scraper completed successfully!")
+                
+                if ',' in employee_name or 'ALL TEAM' in employee_name.upper():
+                    safe_emp = "ALL_TEAM"
+                else:
+                    safe_emp = re.sub(r'[^a-zA-Z0-9]', '_', employee_name)
+                safe_from = re.sub(r'[^a-zA-Z0-9]', '_', from_date_str)
+                output_file = f"audit_report_{safe_emp}_{safe_from}.xlsx"
+                
+                if os.path.exists(output_file):
+                    st.session_state["last_output_file"] = output_file
                     st.session_state["last_run_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    import glob
+                    matching_files = glob.glob(f"audit_report_*{safe_from}*.xlsx")
+                    if matching_files:
+                        st.session_state["last_output_file"] = matching_files[0]
+                        st.session_state["last_run_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
         except Exception as e:
             st.error(f"❌ Scraper error encountered: {e}")

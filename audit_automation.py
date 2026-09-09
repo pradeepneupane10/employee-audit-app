@@ -20,10 +20,24 @@ from playwright.sync_api import sync_playwright
 LOGIN_USER = "laxman.koirala"
 LOGIN_PASS = "koirala...laxman"
 
+# Reconfigure stdout/stderr to utf-8 if supported on Windows
+try:
+    if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 # Setup simple, clean logging
 def log(msg, level="INFO"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [{level}] {msg}")
+    formatted_msg = f"[{timestamp}] [{level}] {msg}"
+    try:
+        print(formatted_msg, flush=True)
+    except UnicodeEncodeError:
+        safe_msg = formatted_msg.encode('ascii', errors='replace').decode('ascii')
+        print(safe_msg, flush=True)
 
 def wait_for_postback(page, timeout_ms=8000):
     try:
@@ -207,7 +221,23 @@ def main():
     with sync_playwright() as p:
         log("Launching Chrome browser...")
         is_headless = os.environ.get("HEADLESS", "true").lower() != "false"
-        browser = p.chromium.launch(headless=is_headless, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"])
+        
+        # Check for system chromium installed via apt in Streamlit Cloud / Debian
+        chrome_path = None
+        for path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
+            if os.path.exists(path):
+                chrome_path = path
+                break
+                
+        launch_kwargs = {
+            "headless": is_headless,
+            "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        }
+        if chrome_path:
+            log(f"Using system chromium at {chrome_path}")
+            launch_kwargs["executable_path"] = chrome_path
+
+        browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
         page = context.new_page()
         
@@ -241,7 +271,7 @@ def main():
             const selects = Array.from(document.querySelectorAll('select'));
             
             // 1. Audit For
-            const auditForSelect = selects.find(s => 
+            const auditForSelect = document.getElementById('ContentPlaceHolder1_ddlOF') || selects.find(s => 
                 Array.from(s.options).some(o => o.text.trim().toLowerCase() === auditFor.toLowerCase() || o.value.trim().toLowerCase() === auditFor.toLowerCase())
             );
             if (auditForSelect) {
@@ -254,7 +284,7 @@ def main():
             }
             
             // 2. Module
-            const moduleSelect = selects.find(s => 
+            const moduleSelect = document.getElementById('ContentPlaceHolder1_combomodul') || selects.find(s => 
                 Array.from(s.options).some(o => o.text.trim().toLowerCase() === moduleVal.toLowerCase() || o.value.trim().toLowerCase() === moduleVal.toLowerCase())
             );
             if (moduleSelect) {
@@ -267,7 +297,7 @@ def main():
             }
             
             // 3. Operation
-            const operationSelect = selects.find(s => 
+            const operationSelect = document.getElementById('ContentPlaceHolder1_comboactivity') || selects.find(s => 
                 Array.from(s.options).some(o => o.text.trim().toLowerCase() === operationVal.toLowerCase() || o.value.trim().toLowerCase() === operationVal.toLowerCase())
             );
             if (operationSelect) {
@@ -279,19 +309,22 @@ def main():
                 }
             }
             
-            // 4. Employee (UserWise dropdown) - robust case-insensitive substring & whitespace normalized matching
+            // 4. Employee (Target specific combouserddl dropdown with exact name matching)
             const cleanTarget = employeeVal.toLowerCase().replace(/\s+/g, ' ').trim();
-            const employeeSelect = selects.find(s => 
-                Array.from(s.options).some(o => {
-                    const cleanOpt = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
-                    return cleanOpt.includes(cleanTarget) || cleanTarget.includes(cleanOpt);
-                })
+            const employeeSelect = document.getElementById('ContentPlaceHolder1_combouserddl') || selects.find(s => 
+                s.id.includes('user') || Array.from(s.options).some(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget)
             );
             if (employeeSelect) {
-                const opt = Array.from(employeeSelect.options).find(o => {
-                    const cleanOpt = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
-                    return cleanOpt.includes(cleanTarget) || cleanTarget.includes(cleanOpt);
-                });
+                // Try exact match first
+                let opt = Array.from(employeeSelect.options).find(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget);
+                // Fallback: match full name or all words in the employee's name
+                if (!opt) {
+                    const targetWords = cleanTarget.split(' ').filter(w => w.length > 1);
+                    opt = Array.from(employeeSelect.options).find(o => {
+                        const optText = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
+                        return optText.includes(cleanTarget) || (targetWords.length > 1 && targetWords.every(w => optText.includes(w)));
+                    });
+                }
                 if (opt && employeeSelect.value !== opt.value) {
                     employeeSelect.value = opt.value;
                     employeeSelect.dispatchEvent(new Event('change', { bubbles: true }));
@@ -688,6 +721,12 @@ def main():
                 wait_for_postback(page)
                 page.wait_for_timeout(500)
                 safe_wait_for_networkidle(page, 5000)
+
+            active_selected_text = page.evaluate("""() => {
+                const s = document.getElementById('ContentPlaceHolder1_combouserddl');
+                return s ? (s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : '') : '';
+            }""")
+            log(f"Verified active dropdown selection: '{active_selected_text}' (Target was: '{target_emp}')")
                 
             # Set Dates
             log(f"Auto-setting date inputs (From: {from_date}, To: {to_date})...")
@@ -749,11 +788,11 @@ def main():
                     
                     # Wait for ASP.NET postback
                     wait_for_postback(page)
-                    page.wait_for_timeout(400)
+                    page.wait_for_timeout(100)
                     
                     # Wait for modal frame to appear
                     modal_frame = None
-                    for _ in range(25):
+                    for _ in range(40):
                         for frame in page.frames:
                             try:
                                 has_header = frame.evaluate(r"""
@@ -771,7 +810,7 @@ def main():
                                 pass
                         if modal_frame:
                             break
-                        page.wait_for_timeout(200)
+                        page.wait_for_timeout(50)
 
                     if not modal_frame:
                         log(f"[{target_emp}] Timeout waiting for 'Case Information' popup to open inside iframe for record {i+1}", "WARNING")
@@ -783,14 +822,12 @@ def main():
                             pass
                         continue
                     
-                    page.wait_for_timeout(300)
-                    
                     # Scroll modal inside the frame
                     try:
                         modal_frame.evaluate(scroll_modal_js)
                     except Exception:
                         pass
-                    page.wait_for_timeout(200)
+                    page.wait_for_timeout(50)
                     
                     # Extract details from the frame
                     modal_data = {}
@@ -808,16 +845,15 @@ def main():
                         
                     if not closed:
                         try:
-                            modal_frame.locator('text=Close').first.click(timeout=2000)
+                            modal_frame.locator('text=Close').first.click(timeout=1500)
                         except Exception:
                             log("Could not close the modal.", "ERROR")
                     
                     # Wait for close postback to complete
                     wait_for_postback(page)
-                    page.wait_for_timeout(300)
                     
                     modal_closed = False
-                    for _ in range(25):
+                    for _ in range(30):
                         try:
                             is_visible = page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible()
                             if not is_visible:
@@ -826,7 +862,7 @@ def main():
                         except Exception:
                             modal_closed = True
                             break
-                        page.wait_for_timeout(200)
+                        page.wait_for_timeout(50)
 
                     combined_record = {
                         "Target Employee": target_emp,
@@ -840,7 +876,7 @@ def main():
                         **modal_data
                     }
                     scraped_records.append(combined_record)
-                    page.wait_for_timeout(300)
+                    page.wait_for_timeout(50)
                     
                 # Check pagination
                 pagination_items = page.evaluate(get_pagination_info_js)
@@ -868,8 +904,8 @@ def main():
                     
                     page.evaluate(click_page_js, str(next_page_val))
                     wait_for_postback(page)
-                    page.wait_for_timeout(1500)
-                    safe_wait_for_networkidle(page, 6000)
+                    page.wait_for_timeout(500)
+                    safe_wait_for_networkidle(page, 4000)
                     
                     post_pagination = page.evaluate(get_pagination_info_js)
                     new_active = next((item for item in post_pagination if item["active"]), None) if post_pagination else None
@@ -886,7 +922,7 @@ def main():
                     log(f"[{target_emp}] Reached the last page (Page {current_page_val}). All pages extracted successfully.")
                     break
             
-            log(f"✓ Finished scraping all audit records for {target_emp}.")
+            log(f"[SUCCESS] Finished scraping all audit records for {target_emp}.")
             page.wait_for_timeout(1000)
                 
         log("Scraping completed. Closing browser.")

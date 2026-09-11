@@ -160,7 +160,7 @@ with st.sidebar:
     
     # Employee Selection
     emp_options = [
-        "👥 ALL TEAM (Ajit, Shashikant, Om, Sabin, Sunil, Sanjeev, Chandramani)",
+        "👥 ALL TEAM (Ajit, Shashikant, Om, Sabin, Sunil, Sanjeev, Chandramani, Rajesh)",
         "Ajit Shrestha",
         "Shashikant Chaudhary",
         "Om Neupane",
@@ -168,14 +168,15 @@ with st.sidebar:
         "Sunil Chaudhary",
         "Sanjeev Giri",
         "Chandramani Tharu",
+        "Rajesh Maharjan",
         "Custom Employee Name / List..."
     ]
     selected_emp_type = st.selectbox("Employee / Team Selection", emp_options, index=0)
     
     if selected_emp_type == "Custom Employee Name / List...":
         employee_name = st.text_input("Enter Employee Name(s) (comma separated for multiple)", value="Om Neupane")
-    elif selected_emp_type == "👥 ALL TEAM (Ajit, Shashikant, Om, Sabin, Sunil, Sanjeev, Chandramani)":
-        employee_name = "Ajit Shrestha, Shashikant Chaudhary, Om Neupane, Sabin Giri, Sunil Chaudhary, Sanjeev Giri, Chandramani Tharu"
+    elif selected_emp_type.startswith("👥 ALL TEAM"):
+        employee_name = "Ajit Shrestha, Shashikant Chaudhary, Om Neupane, Sabin Giri, Sunil Chaudhary, Sanjeev Giri, Chandramani Tharu, Rajesh Maharjan"
     else:
         employee_name = selected_emp_type
         
@@ -593,7 +594,7 @@ with main_mode_tab2:
         "Upload Individual Employee Audit Excel Reports",
         type=["xlsx"],
         accept_multiple_files=True,
-        help="Select multiple files (e.g. Om Neupane, Ajit Shrestha, Shashikant Chaudhary, Sabin Giri, Sunil Chaudhary, Sanjeev Giri, Chandramani Tharu, etc.)"
+        help="Select multiple files (e.g. Om Neupane, Ajit Shrestha, Shashikant Chaudhary, Sabin Giri, Sunil Chaudhary, Sanjeev Giri, Chandramani Tharu, Rajesh Maharjan, etc.)"
     )
     
     if uploaded_files:

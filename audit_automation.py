@@ -76,6 +76,28 @@ def safe_wait_for_networkidle(page, timeout_ms=5000):
     except Exception:
         pass
 
+def safe_eval(page, script, arg=None, max_retries=5):
+    """Executes page.evaluate safely, retrying if an ASP.NET postback destroyed the execution context."""
+    for attempt in range(max_retries):
+        try:
+            if arg is not None:
+                return page.evaluate(script, arg)
+            return page.evaluate(script)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "execution context was destroyed" in err_str or "navigation" in err_str or "target closed" in err_str:
+                page.wait_for_timeout(700)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                continue
+            if attempt == max_retries - 1:
+                log(f"safe_eval error after {max_retries} attempts: {e}", "WARNING")
+                return None
+            page.wait_for_timeout(300)
+    return None
+
 def format_duration(td):
     if pd.isna(td) or not isinstance(td, timedelta):
         return "N/A"
@@ -224,12 +246,12 @@ automate_selects_js = r"""
     if (employeeSelect) {
         // Try exact match first
         let opt = Array.from(employeeSelect.options).find(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget);
-        // Fallback: match full name or all words in the employee's name
+        // Fallback: match full name or any distinctive name word (e.g. Shashikant)
         if (!opt) {
-            const targetWords = cleanTarget.split(' ').filter(w => w.length > 1);
+            const targetWords = cleanTarget.split(' ').filter(w => w.length > 2);
             opt = Array.from(employeeSelect.options).find(o => {
                 const optText = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
-                return optText.includes(cleanTarget) || (targetWords.length > 1 && targetWords.every(w => optText.includes(w)));
+                return optText.includes(cleanTarget) || cleanTarget.includes(optText) || (targetWords.length > 0 && targetWords.some(w => optText.includes(w)));
             });
         }
         if (opt && employeeSelect.value !== opt.value) {
@@ -645,14 +667,14 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
         # Auto-configure grid dropdowns
         log(f"[{target_emp}] Auto-applying dropdown filters (AuditFor='Employee', Module='Case', Operation='Update')...")
         for attempt in range(10):
-            step = page.evaluate(automate_selects_js, ["Employee", "Case", "Update", target_emp])
+            step = safe_eval(page, automate_selects_js, ["Employee", "Case", "Update", target_emp])
             if step == "done":
                 break
             wait_for_postback(page)
             page.wait_for_timeout(500)
             safe_wait_for_networkidle(page, 5000)
 
-        active_selected_text = page.evaluate("""() => {
+        active_selected_text = safe_eval(page, """() => {
             const s = document.getElementById('ContentPlaceHolder1_combouserddl');
             return s ? (s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : '') : '';
         }""")
@@ -660,12 +682,12 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
 
         # Set Dates
         log(f"[{target_emp}] Setting date inputs (From: {from_date}, To: {to_date})...")
-        dates_set = page.evaluate(set_date_inputs_js, [from_date, to_date])
+        dates_set = safe_eval(page, set_date_inputs_js, [from_date, to_date])
         page.wait_for_timeout(500)
 
         # Click search
         log(f"[{target_emp}] Submitting query...")
-        searched = page.evaluate(click_search_js)
+        searched = safe_eval(page, click_search_js)
         if searched:
             wait_for_postback(page)
             page.wait_for_timeout(1500)
@@ -681,26 +703,26 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
         page_num = 1
         while True:
             log(f"[{target_emp}] Scanning page {page_num}...")
-            has_grid = page.evaluate(find_grid_table_js)
+            has_grid = safe_eval(page, find_grid_table_js)
             if not has_grid:
                 log(f"[{target_emp}] No audit records grid table found on page {page_num}.")
                 break
                 
-            rows_count = page.evaluate(get_rows_count_js)
+            rows_count = safe_eval(page, get_rows_count_js) or 0
             log(f"[{target_emp}] Page {page_num}: Found {rows_count} records.")
             
             if rows_count == 0:
                 break
                 
             for i in range(rows_count):
-                row_info = page.evaluate(get_row_data_js, i)
+                row_info = safe_eval(page, get_row_data_js, i)
                 if not row_info:
                     continue
                 
                 log(f"[{target_emp}] Record {i+1}/{rows_count} (Page {page_num}): Date='{row_info['date']}' | User='{row_info['userName']}' | Remark='{row_info['remark']}'")
                 
                 # Click row link to open modal
-                clicked = page.evaluate(click_row_link_js, i)
+                clicked = safe_eval(page, click_row_link_js, i)
                 if not clicked:
                     continue
                 

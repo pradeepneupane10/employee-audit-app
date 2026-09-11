@@ -241,6 +241,9 @@ def main():
         context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
         page = context.new_page()
         
+        # Abort heavy assets (images, fonts, media) to dramatically speed up page postbacks & modal loading
+        page.route("**/*.{png,jpg,jpeg,svg,gif,webp,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
+        
         # Navigate to login portal first
         login_url = "https://billing.cgnet.com.np/h8ssrms/Login.aspx"
         target_url = "https://billing.cgnet.com.np/h8ssrms/Auditpage.aspx"
@@ -792,8 +795,13 @@ def main():
                     
                     # Wait for modal frame to appear
                     modal_frame = None
-                    for _ in range(40):
-                        for frame in page.frames:
+                    for _ in range(30):
+                        # Fast-path: check direct ASP.NET iframe name first
+                        direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
+                        candidate_frames = [direct_f] if direct_f else page.frames
+                        for frame in candidate_frames:
+                            if not frame:
+                                continue
                             try:
                                 has_header = frame.evaluate(r"""
                                 () => {
@@ -810,7 +818,7 @@ def main():
                                 pass
                         if modal_frame:
                             break
-                        page.wait_for_timeout(50)
+                        page.wait_for_timeout(40)
 
                     if not modal_frame:
                         log(f"[{target_emp}] Timeout waiting for 'Case Information' popup to open inside iframe for record {i+1}", "WARNING")
@@ -1214,6 +1222,91 @@ def main():
         print("=" * 80)
         log(f"Scraped details and compiled report saved to: {output_file}")
         print("=" * 80)
+
+        # Generate Executive Team Excel report if multiple employees or ALL TEAM
+        if len(emp_list) > 1 or "ALL" in employee_name.upper():
+            exec_output_file = os.path.join(output_dir, f"EXECUTIVE_TEAM_AUDIT_REPORT_{safe_from}.xlsx")
+            log(f"Building Combined Executive Team Report: {exec_output_file}...")
+            try:
+                emp_col = 'Grid Employee Name' if 'Grid Employee Name' in df.columns else 'Target Employee'
+                df['Employee Name'] = df[emp_col].fillna(df.get('Target Employee', 'Unknown'))
+                
+                def is_solved_exec(row):
+                    st_val = str(row.get("Status", "")).strip().lower()
+                    rm_val = str(row.get("Grid Remark", "")).strip().lower()
+                    if st_val in ["completed", "closed"]:
+                        return True
+                    if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
+                        return True
+                    return False
+
+                df['Is_Solved_Val'] = df.apply(is_solved_exec, axis=1)
+
+                summary_rows = []
+                for emp, grp in df.groupby("Employee Name"):
+                    tot = len(grp)
+                    solved = grp["Is_Solved_Val"].sum()
+                    rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
+                    summary_rows.append({
+                        "Employee Name": emp,
+                        "Total Scraped Tickets": tot,
+                        "Solved / Handled Count": solved,
+                        "Solution Rate %": rate
+                    })
+                    
+                team_summary_df = pd.DataFrame(summary_rows)
+                tot_tickets_team = len(df)
+                tot_solved_team = df["Is_Solved_Val"].sum()
+                team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
+                
+                total_team_row = pd.DataFrame([{
+                    "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
+                    "Total Scraped Tickets": tot_tickets_team,
+                    "Solved / Handled Count": tot_solved_team,
+                    "Solution Rate %": team_rate_val
+                }])
+                team_summary_df = pd.concat([team_summary_df, total_team_row], ignore_index=True)
+
+                work_summary_df = df.groupby("Task / Issue Type", dropna=False).agg(
+                    Total_Tickets=("Ticket Number", "count"),
+                    Solved_Count=("Is_Solved_Val", "sum")
+                ).reset_index()
+                work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
+                work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(df) * 100).round(1).astype(str) + '%'
+
+                export_master = df_export.copy()
+                if 'Employee Name' not in export_master.columns:
+                    export_master['Employee Name'] = df['Employee Name']
+
+                with pd.ExcelWriter(exec_output_file, engine='openpyxl') as exec_writer:
+                    team_summary_df.to_excel(exec_writer, sheet_name="Team Executive Summary", index=False)
+                    work_summary_df.to_excel(exec_writer, sheet_name="Category Summary", index=False)
+                    export_master.to_excel(exec_writer, sheet_name="Master Audit Details", index=False)
+
+                wb_exec = openpyxl.load_workbook(exec_output_file)
+                for sheetname in wb_exec.sheetnames:
+                    ws = wb_exec[sheetname]
+                    for col in range(1, ws.max_column + 1):
+                        cell = ws.cell(row=1, column=col)
+                        cell.fill = header_fill
+                        cell.font = header_font
+                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                    for row in range(2, ws.max_row + 1):
+                        for col in range(1, ws.max_column + 1):
+                            cell = ws.cell(row=row, column=col)
+                            cell.font = cell_font
+                            cell.border = thin_border
+                            if sheetname == "Team Executive Summary" and row == ws.max_row:
+                                cell.font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
+                                cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+                    for col in ws.columns:
+                        max_len = max(len(str(cell.value or '')) for cell in col)
+                        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+                        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+                wb_exec.save(exec_output_file)
+                log(f"Combined Executive Team report saved to: {exec_output_file}")
+            except Exception as exec_err:
+                log(f"Could not build executive report: {exec_err}", "WARNING")
 
 if __name__ == "__main__":
     main()

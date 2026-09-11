@@ -454,10 +454,83 @@ with main_mode_tab1:
                 """, unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
-
             st.markdown("### 📥 Download Executive Report")
-            with open(output_file, "rb") as f:
-                bytes_data = f.read()
+
+            emp_name_col = "Grid Employee Name" if "Grid Employee Name" in df_details.columns else "Employee Name"
+            has_multiple_emps = (emp_name_col in df_details.columns and df_details[emp_name_col].dropna().nunique() > 1) or ("ALL_TEAM" in output_file) or ("," in str(employee_name))
+
+            if has_multiple_emps:
+                today_filename_str = datetime.now().strftime("%d_%b_%Y")
+                exec_file_name = f"EXECUTIVE_TEAM_AUDIT_REPORT_{today_filename_str}.xlsx"
+                
+                import glob
+                matching_exec = glob.glob(f"*EXECUTIVE_TEAM_AUDIT_REPORT_*.xlsx")
+                exec_bytes = None
+                if matching_exec and os.path.exists(matching_exec[0]):
+                    try:
+                        with open(matching_exec[0], "rb") as ef:
+                            exec_bytes = ef.read()
+                    except Exception:
+                        pass
+                
+                if exec_bytes is None:
+                    if "Employee Name" not in df_details.columns and emp_name_col in df_details.columns:
+                        df_details["Employee Name"] = df_details[emp_name_col]
+                        
+                    def is_solved_row(row):
+                        st_val = str(row.get("Status", "")).strip().lower()
+                        rm_val = str(row.get("Grid Remark", "")).strip().lower()
+                        if st_val in ["completed", "closed"]:
+                            return True
+                        if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
+                            return True
+                        return False
+
+                    df_details["Is_Solved_Val"] = df_details.apply(is_solved_row, axis=1)
+                    
+                    summary_rows = []
+                    for emp, grp in df_details.groupby("Employee Name"):
+                        tot = len(grp)
+                        solved = grp["Is_Solved_Val"].sum()
+                        rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
+                        summary_rows.append({
+                            "Employee Name": emp,
+                            "Total Scraped Tickets": tot,
+                            "Solved / Handled Count": solved,
+                            "Solution Rate %": rate
+                        })
+                    team_summary_df = pd.DataFrame(summary_rows)
+                    tot_tickets_team = len(df_details)
+                    tot_solved_team = df_details["Is_Solved_Val"].sum()
+                    team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
+                    total_team_row = pd.DataFrame([{
+                        "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
+                        "Total Scraped Tickets": tot_tickets_team,
+                        "Solved / Handled Count": tot_solved_team,
+                        "Solution Rate %": team_rate_val
+                    }])
+                    team_summary_df = pd.concat([team_summary_df, total_team_row], ignore_index=True)
+                    
+                    work_summary_df = df_details.groupby("Task / Issue Type", dropna=False).agg(
+                        Total_Tickets=("Ticket Number", "count"),
+                        Solved_Count=("Is_Solved_Val", "sum")
+                    ).reset_index()
+                    work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
+                    work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(df_details) * 100).round(1).astype(str) + '%'
+                    
+                    export_master = df_details.drop(columns=["Is_Solved_Val"], errors="ignore")
+                    exec_bytes = build_executive_team_excel(export_master, team_summary_df, work_summary_df)
+
+                st.download_button(
+                    label=f"⬇️ Download Combined Executive Team Report ({exec_file_name})",
+                    data=exec_bytes,
+                    file_name=exec_file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.caption("✨ Exact 3-sheet Executive Team Report with no manual file merging needed!")
+            else:
+                with open(output_file, "rb") as f:
+                    bytes_data = f.read()
                 st.download_button(
                     label=f"⬇️ Download Excel Audit Report ({os.path.basename(output_file)})",
                     data=bytes_data,

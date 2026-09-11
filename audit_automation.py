@@ -172,6 +172,660 @@ def handle_login(page):
     else:
         log("Submit button not found!", "ERROR")
 
+
+automate_selects_js = r"""
+([auditFor, moduleVal, operationVal, employeeVal]) => {
+    const selects = Array.from(document.querySelectorAll('select'));
+    
+    // 1. Audit For
+    const auditForSelect = document.getElementById('ContentPlaceHolder1_ddlOF') || selects.find(s => 
+        Array.from(s.options).some(o => o.text.trim().toLowerCase() === auditFor.toLowerCase() || o.value.trim().toLowerCase() === auditFor.toLowerCase())
+    );
+    if (auditForSelect) {
+        const opt = Array.from(auditForSelect.options).find(o => o.text.trim().toLowerCase() === auditFor.toLowerCase() || o.value.trim().toLowerCase() === auditFor.toLowerCase());
+        if (opt && auditForSelect.value !== opt.value) {
+            auditForSelect.value = opt.value;
+            auditForSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            return "auditFor";
+        }
+    }
+    
+    // 2. Module
+    const moduleSelect = document.getElementById('ContentPlaceHolder1_combomodul') || selects.find(s => 
+        Array.from(s.options).some(o => o.text.trim().toLowerCase() === moduleVal.toLowerCase() || o.value.trim().toLowerCase() === moduleVal.toLowerCase())
+    );
+    if (moduleSelect) {
+        const opt = Array.from(moduleSelect.options).find(o => o.text.trim().toLowerCase() === moduleVal.toLowerCase() || o.value.trim().toLowerCase() === moduleVal.toLowerCase());
+        if (opt && moduleSelect.value !== opt.value) {
+            moduleSelect.value = opt.value;
+            moduleSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            return "module";
+        }
+    }
+    
+    // 3. Operation
+    const operationSelect = document.getElementById('ContentPlaceHolder1_comboactivity') || selects.find(s => 
+        Array.from(s.options).some(o => o.text.trim().toLowerCase() === operationVal.toLowerCase() || o.value.trim().toLowerCase() === operationVal.toLowerCase())
+    );
+    if (operationSelect) {
+        const opt = Array.from(operationSelect.options).find(o => o.text.trim().toLowerCase() === operationVal.toLowerCase() || o.value.trim().toLowerCase() === operationVal.toLowerCase());
+        if (opt && operationSelect.value !== opt.value) {
+            operationSelect.value = opt.value;
+            operationSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            return "operation";
+        }
+    }
+    
+    // 4. Employee (Target specific combouserddl dropdown with exact name matching)
+    const cleanTarget = employeeVal.toLowerCase().replace(/\s+/g, ' ').trim();
+    const employeeSelect = document.getElementById('ContentPlaceHolder1_combouserddl') || selects.find(s => 
+        s.id.includes('user') || Array.from(s.options).some(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget)
+    );
+    if (employeeSelect) {
+        // Try exact match first
+        let opt = Array.from(employeeSelect.options).find(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget);
+        // Fallback: match full name or all words in the employee's name
+        if (!opt) {
+            const targetWords = cleanTarget.split(' ').filter(w => w.length > 1);
+            opt = Array.from(employeeSelect.options).find(o => {
+                const optText = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
+                return optText.includes(cleanTarget) || (targetWords.length > 1 && targetWords.every(w => optText.includes(w)));
+            });
+        }
+        if (opt && employeeSelect.value !== opt.value) {
+            employeeSelect.value = opt.value;
+            employeeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            return "employee";
+        }
+    }
+    
+    // 5. Select DateWise radio button if present
+    const dateWiseRadio = document.getElementById('ContentPlaceHolder1_rdbdat_0') || 
+                          document.querySelector('input[type="radio"][value*="Date" i], input[type="radio"][id*="dat" i]');
+    if (dateWiseRadio && !dateWiseRadio.checked) {
+        dateWiseRadio.click();
+        dateWiseRadio.checked = true;
+        dateWiseRadio.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    // 6. Page Size dropdown - select 500 Records / highest batch size
+    const pageSizeSelect = document.getElementById('ContentPlaceHolder1_ddlPageSize') || selects.find(s => 
+        Array.from(s.options).some(o => o.text.includes('Records') || o.text.includes('500') || o.text.includes('200'))
+    );
+    if (pageSizeSelect) {
+        const optMax = Array.from(pageSizeSelect.options).find(o => o.text.includes('500') || o.text.includes('200') || o.text.includes('100'));
+        if (optMax && pageSizeSelect.value !== optMax.value) {
+            pageSizeSelect.value = optMax.value;
+            pageSizeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            return "pageSize";
+        }
+    }
+    
+    return "done";
+}
+"""
+
+set_date_inputs_js = r"""
+([fromDateStr, toDateStr]) => {
+    const fromInput = document.getElementById('ContentPlaceHolder1_txtfrmdate') || document.querySelector('input[id*="frm" i], input[name*="frm" i]');
+    const toInput = document.getElementById('ContentPlaceHolder1_txttodate') || document.querySelector('input[id*="to" i], input[name*="to" i]');
+    
+    if (fromInput) {
+        fromInput.value = fromDateStr;
+        fromInput.dispatchEvent(new Event('input', { bubbles: true }));
+        fromInput.dispatchEvent(new Event('change', { bubbles: true }));
+        fromInput.dispatchEvent(new Event('blur', { bubbles: true }));
+    }
+    if (toInput) {
+        toInput.value = toDateStr;
+        toInput.dispatchEvent(new Event('input', { bubbles: true }));
+        toInput.dispatchEvent(new Event('change', { bubbles: true }));
+        toInput.dispatchEvent(new Event('blur', { bubbles: true }));
+    }
+    return !!(fromInput && toInput);
+}
+"""
+
+click_search_js = r"""
+() => {
+    const btn = document.getElementById('ContentPlaceHolder1_btnserch');
+    if (btn) {
+        btn.click();
+        return true;
+    }
+    const buttons = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"], button'));
+    const searchBtn = buttons.find(b => {
+        const val = (b.value || b.textContent || '').trim().toLowerCase();
+        return val === 'search' || val.includes('search');
+    });
+    if (searchBtn) {
+        searchBtn.click();
+        return true;
+    }
+    return false;
+}
+"""
+
+# Extraction loop injection scripts
+find_grid_table_js = r"""
+() => {
+    const grid = document.getElementById('ContentPlaceHolder1_gdhistory') || 
+                 document.querySelector('table[id*="gdhistory" i]') || 
+                 document.querySelector('table.table2');
+    return !!grid;
+}
+"""
+
+get_rows_count_js = r"""
+() => {
+    const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
+                      document.querySelector('table[id*="gdhistory" i]') || 
+                      document.querySelector('table.table2');
+    if (!gridTable) return 0;
+    const rows = Array.from(gridTable.querySelectorAll('tr'));
+    let count = 0;
+    for (const row of rows) {
+        const cells = Array.from(row.querySelectorAll('td'));
+        if (cells.length < 5) continue;
+        const firstCellText = cells[0].textContent.trim().toLowerCase();
+        if (firstCellText === 'date') continue;
+        if (row.querySelector('table') || cells.some(c => c.textContent.trim().match(/^\d+$/) && cells.length <= 2)) {
+            continue;
+        }
+        count++;
+    }
+    return count;
+}
+"""
+
+get_row_data_js = r"""
+(rowIndex) => {
+    const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
+                      document.querySelector('table[id*="gdhistory" i]') || 
+                      document.querySelector('table.table2');
+    if (!gridTable) return null;
+    const rows = Array.from(gridTable.querySelectorAll('tr'));
+    
+    const dataRows = [];
+    for (const row of rows) {
+        const cells = Array.from(row.querySelectorAll('td'));
+        if (cells.length < 5) continue;
+        const firstCellText = cells[0].textContent.trim().toLowerCase();
+        if (firstCellText === 'date') continue;
+        if (row.querySelector('table') || cells.some(c => c.textContent.trim().match(/^\d+$/) && cells.length <= 2)) {
+            continue;
+        }
+        dataRows.push(row);
+    }
+    
+    if (rowIndex >= dataRows.length) return null;
+    const targetRow = dataRows[rowIndex];
+    const cells = Array.from(targetRow.querySelectorAll('td'));
+    
+    return {
+        date: cells[0].textContent.trim(),
+        userName: cells[1].textContent.trim(),
+        employeeName: cells[2].textContent.trim(),
+        moduleName: cells[3].textContent.trim(),
+        operation: cells[4].textContent.trim(),
+        ipAddress: cells.length > 5 ? cells[5].textContent.trim() : '',
+        remark: cells.length > 6 ? cells[6].textContent.trim() : ''
+    };
+}
+"""
+
+click_row_date_js = click_row_link_js = r"""
+(rowIndex) => {
+    const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
+                      document.querySelector('table[id*="gdhistory" i]') || 
+                      document.querySelector('table.table2');
+    if (!gridTable) return false;
+    const rows = Array.from(gridTable.querySelectorAll('tr'));
+    
+    const dataRows = [];
+    for (const row of rows) {
+        const cells = Array.from(row.querySelectorAll('td'));
+        if (cells.length < 5) continue;
+        const firstCellText = cells[0].textContent.trim().toLowerCase();
+        if (firstCellText === 'date') continue;
+        if (row.querySelector('table') || cells.some(c => c.textContent.trim().match(/^\d+$/) && cells.length <= 2)) {
+            continue;
+        }
+        dataRows.push(row);
+    }
+    
+    if (rowIndex >= dataRows.length) return false;
+    const cell = dataRows[rowIndex].querySelectorAll('td')[0];
+    const clickTarget = cell.querySelector('a') || cell;
+    clickTarget.click();
+    return true;
+}
+"""
+
+scroll_modal_js = r"""
+() => {
+    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
+        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
+    );
+    if (headers.length === 0) return false;
+    
+    let container = null;
+    let parent = headers[0].parentElement;
+    while (parent && parent.tagName !== 'BODY') {
+        if (parent.querySelector('input[type="button"][value="Close"]') || parent.innerText.includes('Ticket Number')) {
+            container = parent;
+            break;
+        }
+        parent = parent.parentElement;
+    }
+    
+    if (!container) container = document;
+    
+    let scrolled = false;
+    const allElements = container.querySelectorAll('*');
+    for (const el of allElements) {
+        if (el.scrollHeight > el.clientHeight && 
+            (window.getComputedStyle(el).overflowY === 'auto' || 
+             window.getComputedStyle(el).overflowY === 'scroll' ||
+             el.style.overflow === 'auto' ||
+             el.style.overflow === 'scroll')) {
+            el.scrollTop = el.scrollHeight;
+            scrolled = true;
+        }
+    }
+    return scrolled;
+}
+"""
+
+extract_modal_data_js = r"""
+() => {
+    const targets = [
+        "Title", "Ticket Number", "Account Name", "Status", "Case Origin", 
+        "Customer Name", "Mobile No", "Category", "Sub Sub Category", 
+        "Assigned Date", "Estimated closed time based on SLA", 
+        "Estimated closed time based on TAT", "User Id", "Created Date", 
+        "Last Modified Date", "Associated Location Status", "Latitude", 
+        "Case Reason", "Assign Team", "Assign User", "Priority", "Type", 
+        "Customer Address", "Email", "Sub Category", "Escalated Layer", 
+        "SLA", "SLA Left/Total", "TAT Left/Total", "Created By", 
+        "Last Modified By", "Associated Location Level", 
+        "Associated Location Name", "Longitude"
+    ];
+    
+    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
+        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
+    );
+    
+    let container = null;
+    if (headers.length > 0) {
+        let parent = headers[0].parentElement;
+        while (parent && parent.tagName !== 'BODY') {
+            if (parent.querySelector('input[type="button"][value="Close"]') || parent.innerText.includes('Ticket Number')) {
+                container = parent;
+                break;
+            }
+            parent = parent.parentElement;
+        }
+    }
+    if (!container) container = document;
+    
+    const data = {};
+    const cells = Array.from(container.querySelectorAll('td'));
+    
+    for (const target of targets) {
+        const foundCell = cells.find(c => {
+            const text = c.textContent ? c.textContent.trim().replace(/\s+/g, ' ') : '';
+            return text === target || text === target + ':' || text === target + ' :';
+        });
+        
+        if (foundCell) {
+            const nextCell = foundCell.nextElementSibling;
+            if (nextCell && nextCell.tagName === 'TD') {
+                data[target] = nextCell.textContent.trim();
+            } else {
+                const row = foundCell.closest('tr');
+                if (row) {
+                    const rowCells = Array.from(row.querySelectorAll('td'));
+                    const idx = rowCells.indexOf(foundCell);
+                    if (idx !== -1 && idx + 1 < rowCells.length) {
+                        data[target] = rowCells[idx + 1].textContent.trim();
+                    }
+                }
+            }
+        } else {
+            const divs = Array.from(container.querySelectorAll('div, span, label'));
+            const foundDiv = divs.find(d => {
+                const text = d.textContent ? d.textContent.trim().replace(/\s+/g, ' ') : '';
+                return (text === target || text === target + ':') && d.children.length === 0 && d.offsetWidth > 0;
+            });
+            if (foundDiv) {
+                let next = foundDiv.nextElementSibling;
+                if (next) {
+                    data[target] = next.textContent.trim();
+                }
+            }
+        }
+    }
+
+    // Extract Solution Given / Work Log / Employee Remarks from modal text
+    let solutionGivenText = "";
+    let fullText = (container.innerText || container.textContent || "").trim();
+    
+    const solutionMatch = fullText.match(/Solution Given[\s\S]*/i);
+    if (solutionMatch) {
+        solutionGivenText = solutionMatch[0].replace(/^Solution Given\s*/i, '').replace(/Close\s*$/i, '').trim();
+    }
+    
+    data["Solution Given"] = solutionGivenText || "";
+    data["Employee Remark / Solution Note"] = solutionGivenText || fullText;
+    return data;
+}
+"""
+
+close_modal_js = r"""
+() => {
+    const buttons = Array.from(document.querySelectorAll('input[type="button"], button, a')).filter(el => 
+        el.offsetWidth > 0
+    );
+    const closeBtn = buttons.find(el => {
+        const val = (el.value || el.textContent || '').trim().toLowerCase();
+        return val === 'close';
+    });
+    if (closeBtn) {
+        closeBtn.click();
+        return true;
+    }
+    return false;
+}
+"""
+
+get_pagination_info_js = r"""
+() => {
+    const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
+                      document.querySelector('table[id*="gdhistory" i]') || 
+                      document.querySelector('table.table2');
+    if (!gridTable) return null;
+    
+    let links = Array.from(gridTable.querySelectorAll('a[id*="lnbPg"], span[id*="lnbPg"]'));
+    if (links.length === 0) {
+        const rows = Array.from(gridTable.querySelectorAll('tr'));
+        if (rows.length > 0) {
+            const lastRow = rows[rows.length - 1];
+            const candidateLinks = Array.from(lastRow.querySelectorAll('a, span'));
+            links = candidateLinks.filter(el => {
+                const txt = el.textContent.trim();
+                return /^\d+$/.test(txt) || txt === '...';
+            });
+        }
+    }
+    
+    if (links.length <= 1) return null;
+
+    return links.map(el => {
+        const text = el.textContent.trim();
+        const hasHref = el.hasAttribute('href') && el.getAttribute('href').length > 0;
+        const isDisabled = el.classList.contains('aspNetDisabled') || !hasHref;
+        return {
+            text: text,
+            active: isDisabled,
+            clickable: !isDisabled && hasHref
+        };
+    }).filter(item => /^\d+$/.test(item.text) || item.text === '...');
+}
+"""
+
+click_page_js = r"""
+(pageNumStr) => {
+    const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
+                      document.querySelector('table[id*="gdhistory" i]') || 
+                      document.querySelector('table.table2');
+    if (!gridTable) return false;
+    
+    const links = Array.from(gridTable.querySelectorAll('a'));
+    
+    // 1. Check for exact page number
+    let targetLink = links.find(el => {
+        const txt = el.textContent.trim();
+        return txt === String(pageNumStr) && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled');
+    });
+    
+    // 2. If page number not directly visible, click the trailing ellipsis (Next set of 10 pages)
+    if (!targetLink) {
+        const ellipsisLinks = links.filter(el => el.textContent.trim() === '...' && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled'));
+        if (ellipsisLinks.length > 0) {
+            targetLink = ellipsisLinks[ellipsisLinks.length - 1];
+        }
+    }
+    
+    if (targetLink) {
+        targetLink.click();
+        return true;
+    }
+    return false;
+}
+"""
+
+
+def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
+    """
+    Worker function executed in parallel threads or sequentially.
+    Each worker has its own dedicated Playwright browser instance and session.
+    """
+    emp_records = []
+    with sync_playwright() as p:
+        log(f"[{target_emp}] 🚀 Launching dedicated browser context...")
+        browser = p.chromium.launch(**launch_kwargs)
+        context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
+        page = context.new_page()
+        
+        # Abort heavy assets (images, fonts, media) to dramatically accelerate page loads
+        page.route("**/*.{png,jpg,jpeg,svg,gif,webp,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
+        
+        login_url = "https://billing.cgnet.com.np/h8ssrms/Login.aspx"
+        target_url = "https://billing.cgnet.com.np/h8ssrms/Auditpage.aspx"
+        
+        log(f"[{target_emp}] Connecting to CGNET login portal...")
+        try:
+            page.goto(login_url, timeout=60000)
+            safe_wait_for_networkidle(page, 10000)
+        except Exception as e:
+            log(f"[{target_emp}] Navigation issue: {e}", "WARNING")
+            
+        handle_login(page)
+        
+        log(f"[{target_emp}] Loading Audit page...")
+        try:
+            page.goto(target_url, timeout=30000)
+            safe_wait_for_networkidle(page, 10000)
+        except Exception as e:
+            log(f"[{target_emp}] Could not load audit page: {e}", "ERROR")
+            browser.close()
+            return []
+
+        # Auto-configure grid dropdowns
+        log(f"[{target_emp}] Auto-applying dropdown filters (AuditFor='Employee', Module='Case', Operation='Update')...")
+        for attempt in range(10):
+            step = page.evaluate(automate_selects_js, ["Employee", "Case", "Update", target_emp])
+            if step == "done":
+                break
+            wait_for_postback(page)
+            page.wait_for_timeout(500)
+            safe_wait_for_networkidle(page, 5000)
+
+        active_selected_text = page.evaluate("""() => {
+            const s = document.getElementById('ContentPlaceHolder1_combouserddl');
+            return s ? (s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : '') : '';
+        }""")
+        log(f"[{target_emp}] Active dropdown: '{active_selected_text}'")
+
+        # Set Dates
+        log(f"[{target_emp}] Setting date inputs (From: {from_date}, To: {to_date})...")
+        dates_set = page.evaluate(set_date_inputs_js, [from_date, to_date])
+        page.wait_for_timeout(500)
+
+        # Click search
+        log(f"[{target_emp}] Submitting query...")
+        searched = page.evaluate(click_search_js)
+        if searched:
+            wait_for_postback(page)
+            page.wait_for_timeout(1500)
+            safe_wait_for_networkidle(page, 8000)
+        else:
+            page.wait_for_timeout(3000)
+
+        try:
+            page.locator('table').first.wait_for(state="visible", timeout=6000)
+        except Exception:
+            pass
+
+        page_num = 1
+        while True:
+            log(f"[{target_emp}] Scanning page {page_num}...")
+            has_grid = page.evaluate(find_grid_table_js)
+            if not has_grid:
+                log(f"[{target_emp}] No audit records grid table found on page {page_num}.")
+                break
+                
+            rows_count = page.evaluate(get_rows_count_js)
+            log(f"[{target_emp}] Page {page_num}: Found {rows_count} records.")
+            
+            if rows_count == 0:
+                break
+                
+            for i in range(rows_count):
+                row_info = page.evaluate(get_row_data_js, i)
+                if not row_info:
+                    continue
+                
+                log(f"[{target_emp}] Record {i+1}/{rows_count} (Page {page_num}): Date='{row_info['date']}' | User='{row_info['userName']}' | Remark='{row_info['remark']}'")
+                
+                # Click row link to open modal
+                clicked = page.evaluate(click_row_link_js, i)
+                if not clicked:
+                    continue
+                
+                wait_for_postback(page)
+                page.wait_for_timeout(100)
+                
+                # Fast check for modal frame
+                modal_frame = None
+                for _ in range(30):
+                    direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
+                    candidate_frames = [direct_f] if direct_f else page.frames
+                    for frame in candidate_frames:
+                        if not frame:
+                            continue
+                        try:
+                            has_header = frame.evaluate(r"""
+                            () => {
+                                const headers = Array.from(document.querySelectorAll('*')).filter(el => 
+                                    el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
+                                );
+                                return headers.length > 0;
+                            }
+                            """)
+                            if has_header:
+                                modal_frame = frame
+                                break
+                        except Exception:
+                            pass
+                    if modal_frame:
+                        break
+                    page.wait_for_timeout(40)
+
+                if not modal_frame:
+                    try:
+                        frame = page.frame(name="ContentPlaceHolder1_ifrm")
+                        if frame:
+                            frame.evaluate(close_modal_js)
+                    except Exception:
+                        pass
+                    continue
+                
+                try:
+                    modal_frame.evaluate(scroll_modal_js)
+                except Exception:
+                    pass
+                page.wait_for_timeout(50)
+                
+                modal_data = {}
+                try:
+                    modal_data = modal_frame.evaluate(extract_modal_data_js)
+                except Exception:
+                    pass
+                
+                closed = False
+                try:
+                    closed = modal_frame.evaluate(close_modal_js)
+                except Exception:
+                    pass
+                if not closed:
+                    try:
+                        modal_frame.locator('text=Close').first.click(timeout=1500)
+                    except Exception:
+                        pass
+                
+                wait_for_postback(page)
+                for _ in range(30):
+                    try:
+                        if not page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible():
+                            break
+                    except Exception:
+                        break
+                    page.wait_for_timeout(50)
+
+                combined_record = {
+                    "Target Employee": target_emp,
+                    "Grid Date": row_info["date"],
+                    "Grid User Name": row_info["userName"],
+                    "Grid Employee Name": row_info["employeeName"],
+                    "Grid Module": row_info["moduleName"],
+                    "Grid Operation": row_info["operation"],
+                    "Grid IP Address": row_info["ipAddress"],
+                    "Grid Remark": row_info["remark"],
+                    **modal_data
+                }
+                emp_records.append(combined_record)
+                
+            pagination_items = page.evaluate(get_pagination_info_js)
+            if not pagination_items:
+                break
+                
+            active_item = next((item for item in pagination_items if item["active"]), None)
+            if not active_item:
+                break
+                
+            current_page_val = int(active_item["text"]) if active_item["text"].isdigit() else page_num
+            next_page_val = current_page_val + 1
+            has_next_number = any(item["text"] == str(next_page_val) and item["clickable"] for item in pagination_items)
+            has_next_ellipsis = any(item["text"] == "..." and item["clickable"] for item in pagination_items)
+            
+            if has_next_number or has_next_ellipsis:
+                first_row_before = page.evaluate(get_row_data_js, 0)
+                date_before = first_row_before["date"] if first_row_before else ""
+                
+                page.evaluate(click_page_js, str(next_page_val))
+                wait_for_postback(page)
+                page.wait_for_timeout(500)
+                safe_wait_for_networkidle(page, 4000)
+                
+                post_pagination = page.evaluate(get_pagination_info_js)
+                new_active = next((item for item in post_pagination if item["active"]), None) if post_pagination else None
+                first_row_after = page.evaluate(get_row_data_js, 0)
+                date_after = first_row_after["date"] if first_row_after else ""
+                
+                if (new_active and new_active["text"].isdigit() and int(new_active["text"]) >= next_page_val) or (date_before != date_after):
+                    page_num = int(new_active["text"]) if (new_active and new_active["text"].isdigit()) else next_page_val
+                else:
+                    break
+            else:
+                break
+
+        log(f"[{target_emp}] ✨ Finished scraping! Total records: {len(emp_records)}")
+        browser.close()
+    return emp_records
+
+
 def main():
     print("=" * 80)
     print("            CGNET AUTOMATED AUDIT SCRAPER & REPORT GENERATOR")
@@ -218,725 +872,54 @@ def main():
     output_file = os.path.join(output_dir, f"audit_report_{safe_emp}_{safe_from}.xlsx")
 
     # Start Playwright
-    with sync_playwright() as p:
-        log("Launching Chrome browser...")
-        is_headless = os.environ.get("HEADLESS", "true").lower() != "false"
-        
-        # Check for system chromium installed via apt in Streamlit Cloud / Debian
-        chrome_path = None
-        for path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
-            if os.path.exists(path):
-                chrome_path = path
-                break
-                
-        launch_kwargs = {
-            "headless": is_headless,
-            "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
-        }
-        if chrome_path:
-            log(f"Using system chromium at {chrome_path}")
-            launch_kwargs["executable_path"] = chrome_path
 
-        browser = p.chromium.launch(**launch_kwargs)
-        context = browser.new_context(viewport={"width": 1280, "height": 720}, ignore_https_errors=True)
-        page = context.new_page()
-        
-        # Abort heavy assets (images, fonts, media) to dramatically speed up page postbacks & modal loading
-        page.route("**/*.{png,jpg,jpeg,svg,gif,webp,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
-        
-        # Navigate to login portal first
-        login_url = "https://billing.cgnet.com.np/h8ssrms/Login.aspx"
-        target_url = "https://billing.cgnet.com.np/h8ssrms/Auditpage.aspx"
-        
-        log(f"Navigating to {login_url}...")
-        try:
-            page.goto(login_url, timeout=60000)
-            safe_wait_for_networkidle(page, 10000)
-        except Exception as e:
-            log(f"Navigation issue: {e}", "WARNING")
-            
-        # Handle login
-        handle_login(page)
-        
-        # Navigate to Audit page
-        log(f"Navigating to {target_url}...")
-        try:
-            page.goto(target_url, timeout=30000)
-            safe_wait_for_networkidle(page, 10000)
-        except Exception as e:
-            log(f"Could not load audit page: {e}", "ERROR")
-            browser.close()
-            return
+    # Prepare list of target employees
+    if ',' in employee_name:
+        emp_list = [e.strip() for e in employee_name.split(',') if e.strip()]
+    else:
+        emp_list = [employee_name.strip()]
 
-        # Define JS functions for page interaction
-        automate_selects_js = r"""
-        ([auditFor, moduleVal, operationVal, employeeVal]) => {
-            const selects = Array.from(document.querySelectorAll('select'));
+    is_headless = os.environ.get("HEADLESS", "true").lower() != "false"
+    chrome_path = None
+    for path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
+        if os.path.exists(path):
+            chrome_path = path
+            break
             
-            // 1. Audit For
-            const auditForSelect = document.getElementById('ContentPlaceHolder1_ddlOF') || selects.find(s => 
-                Array.from(s.options).some(o => o.text.trim().toLowerCase() === auditFor.toLowerCase() || o.value.trim().toLowerCase() === auditFor.toLowerCase())
-            );
-            if (auditForSelect) {
-                const opt = Array.from(auditForSelect.options).find(o => o.text.trim().toLowerCase() === auditFor.toLowerCase() || o.value.trim().toLowerCase() === auditFor.toLowerCase());
-                if (opt && auditForSelect.value !== opt.value) {
-                    auditForSelect.value = opt.value;
-                    auditForSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                    return "auditFor";
-                }
-            }
-            
-            // 2. Module
-            const moduleSelect = document.getElementById('ContentPlaceHolder1_combomodul') || selects.find(s => 
-                Array.from(s.options).some(o => o.text.trim().toLowerCase() === moduleVal.toLowerCase() || o.value.trim().toLowerCase() === moduleVal.toLowerCase())
-            );
-            if (moduleSelect) {
-                const opt = Array.from(moduleSelect.options).find(o => o.text.trim().toLowerCase() === moduleVal.toLowerCase() || o.value.trim().toLowerCase() === moduleVal.toLowerCase());
-                if (opt && moduleSelect.value !== opt.value) {
-                    moduleSelect.value = opt.value;
-                    moduleSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                    return "module";
-                }
-            }
-            
-            // 3. Operation
-            const operationSelect = document.getElementById('ContentPlaceHolder1_comboactivity') || selects.find(s => 
-                Array.from(s.options).some(o => o.text.trim().toLowerCase() === operationVal.toLowerCase() || o.value.trim().toLowerCase() === operationVal.toLowerCase())
-            );
-            if (operationSelect) {
-                const opt = Array.from(operationSelect.options).find(o => o.text.trim().toLowerCase() === operationVal.toLowerCase() || o.value.trim().toLowerCase() === operationVal.toLowerCase());
-                if (opt && operationSelect.value !== opt.value) {
-                    operationSelect.value = opt.value;
-                    operationSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                    return "operation";
-                }
-            }
-            
-            // 4. Employee (Target specific combouserddl dropdown with exact name matching)
-            const cleanTarget = employeeVal.toLowerCase().replace(/\s+/g, ' ').trim();
-            const employeeSelect = document.getElementById('ContentPlaceHolder1_combouserddl') || selects.find(s => 
-                s.id.includes('user') || Array.from(s.options).some(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget)
-            );
-            if (employeeSelect) {
-                // Try exact match first
-                let opt = Array.from(employeeSelect.options).find(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget);
-                // Fallback: match full name or all words in the employee's name
-                if (!opt) {
-                    const targetWords = cleanTarget.split(' ').filter(w => w.length > 1);
-                    opt = Array.from(employeeSelect.options).find(o => {
-                        const optText = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
-                        return optText.includes(cleanTarget) || (targetWords.length > 1 && targetWords.every(w => optText.includes(w)));
-                    });
-                }
-                if (opt && employeeSelect.value !== opt.value) {
-                    employeeSelect.value = opt.value;
-                    employeeSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                    return "employee";
-                }
-            }
-            
-            // 5. Select DateWise radio button if present
-            const dateWiseRadio = document.getElementById('ContentPlaceHolder1_rdbdat_0') || 
-                                  document.querySelector('input[type="radio"][value*="Date" i], input[type="radio"][id*="dat" i]');
-            if (dateWiseRadio && !dateWiseRadio.checked) {
-                dateWiseRadio.click();
-                dateWiseRadio.checked = true;
-                dateWiseRadio.dispatchEvent(new Event('change', { bubbles: true }));
-            }
+    launch_kwargs = {
+        "headless": is_headless,
+        "args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+    }
+    if chrome_path:
+        log(f"Using system chromium at {chrome_path}")
+        launch_kwargs["executable_path"] = chrome_path
 
-            // 6. Page Size dropdown - select 500 Records / highest batch size
-            const pageSizeSelect = document.getElementById('ContentPlaceHolder1_ddlPageSize') || selects.find(s => 
-                Array.from(s.options).some(o => o.text.includes('Records') || o.text.includes('500') || o.text.includes('200'))
-            );
-            if (pageSizeSelect) {
-                const optMax = Array.from(pageSizeSelect.options).find(o => o.text.includes('500') || o.text.includes('200') || o.text.includes('100'));
-                if (optMax && pageSizeSelect.value !== optMax.value) {
-                    pageSizeSelect.value = optMax.value;
-                    pageSizeSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                    return "pageSize";
-                }
-            }
-            
-            return "done";
-        }
-        """
+    scraped_records = []
 
-        set_date_inputs_js = r"""
-        ([fromDateStr, toDateStr]) => {
-            const fromInput = document.getElementById('ContentPlaceHolder1_txtfrmdate') || document.querySelector('input[id*="frm" i], input[name*="frm" i]');
-            const toInput = document.getElementById('ContentPlaceHolder1_txttodate') || document.querySelector('input[id*="to" i], input[name*="to" i]');
-            
-            if (fromInput) {
-                fromInput.value = fromDateStr;
-                fromInput.dispatchEvent(new Event('input', { bubbles: true }));
-                fromInput.dispatchEvent(new Event('change', { bubbles: true }));
-                fromInput.dispatchEvent(new Event('blur', { bubbles: true }));
+    if len(emp_list) == 1:
+        log(f"Starting audit scrape for: {emp_list[0]}")
+        scraped_records = scrape_single_employee(emp_list[0], from_date, to_date, launch_kwargs)
+    else:
+        max_workers = min(3, len(emp_list))
+        log(f"⚡ Launching {max_workers} PARALLEL WORKERS to scrape {len(emp_list)} employees simultaneously in separate browser sessions...")
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_emp = {
+                executor.submit(scrape_single_employee, emp, from_date, to_date, launch_kwargs): emp
+                for emp in emp_list
             }
-            if (toInput) {
-                toInput.value = toDateStr;
-                toInput.dispatchEvent(new Event('input', { bubbles: true }));
-                toInput.dispatchEvent(new Event('change', { bubbles: true }));
-                toInput.dispatchEvent(new Event('blur', { bubbles: true }));
-            }
-            return !!(fromInput && toInput);
-        }
-        """
+            for future in as_completed(future_to_emp):
+                emp_done = future_to_emp[future]
+                try:
+                    emp_recs = future.result()
+                    scraped_records.extend(emp_recs)
+                    log(f"✅ Finished [{emp_done}]: collected {len(emp_recs)} records.")
+                except Exception as exc:
+                    log(f"❌ Error during scrape for [{emp_done}]: {exc}", "ERROR")
 
-        click_search_js = r"""
-        () => {
-            const btn = document.getElementById('ContentPlaceHolder1_btnserch');
-            if (btn) {
-                btn.click();
-                return true;
-            }
-            const buttons = Array.from(document.querySelectorAll('input[type="submit"], input[type="button"], button'));
-            const searchBtn = buttons.find(b => {
-                const val = (b.value || b.textContent || '').trim().toLowerCase();
-                return val === 'search' || val.includes('search');
-            });
-            if (searchBtn) {
-                searchBtn.click();
-                return true;
-            }
-            return false;
-        }
-        """
+    # Post processing
 
-        # Extraction loop injection scripts
-        find_grid_table_js = r"""
-        () => {
-            const grid = document.getElementById('ContentPlaceHolder1_gdhistory') || 
-                         document.querySelector('table[id*="gdhistory" i]') || 
-                         document.querySelector('table.table2');
-            return !!grid;
-        }
-        """
-        
-        get_rows_count_js = r"""
-        () => {
-            const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
-                              document.querySelector('table[id*="gdhistory" i]') || 
-                              document.querySelector('table.table2');
-            if (!gridTable) return 0;
-            const rows = Array.from(gridTable.querySelectorAll('tr'));
-            let count = 0;
-            for (const row of rows) {
-                const cells = Array.from(row.querySelectorAll('td'));
-                if (cells.length < 5) continue;
-                const firstCellText = cells[0].textContent.trim().toLowerCase();
-                if (firstCellText === 'date') continue;
-                if (row.querySelector('table') || cells.some(c => c.textContent.trim().match(/^\d+$/) && cells.length <= 2)) {
-                    continue;
-                }
-                count++;
-            }
-            return count;
-        }
-        """
-        
-        get_row_data_js = r"""
-        (rowIndex) => {
-            const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
-                              document.querySelector('table[id*="gdhistory" i]') || 
-                              document.querySelector('table.table2');
-            if (!gridTable) return null;
-            const rows = Array.from(gridTable.querySelectorAll('tr'));
-            
-            const dataRows = [];
-            for (const row of rows) {
-                const cells = Array.from(row.querySelectorAll('td'));
-                if (cells.length < 5) continue;
-                const firstCellText = cells[0].textContent.trim().toLowerCase();
-                if (firstCellText === 'date') continue;
-                if (row.querySelector('table') || cells.some(c => c.textContent.trim().match(/^\d+$/) && cells.length <= 2)) {
-                    continue;
-                }
-                dataRows.push(row);
-            }
-            
-            if (rowIndex >= dataRows.length) return null;
-            const targetRow = dataRows[rowIndex];
-            const cells = Array.from(targetRow.querySelectorAll('td'));
-            
-            return {
-                date: cells[0].textContent.trim(),
-                userName: cells[1].textContent.trim(),
-                employeeName: cells[2].textContent.trim(),
-                moduleName: cells[3].textContent.trim(),
-                operation: cells[4].textContent.trim(),
-                ipAddress: cells.length > 5 ? cells[5].textContent.trim() : '',
-                remark: cells.length > 6 ? cells[6].textContent.trim() : ''
-            };
-        }
-        """
-        
-        click_row_date_js = click_row_link_js = r"""
-        (rowIndex) => {
-            const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
-                              document.querySelector('table[id*="gdhistory" i]') || 
-                              document.querySelector('table.table2');
-            if (!gridTable) return false;
-            const rows = Array.from(gridTable.querySelectorAll('tr'));
-            
-            const dataRows = [];
-            for (const row of rows) {
-                const cells = Array.from(row.querySelectorAll('td'));
-                if (cells.length < 5) continue;
-                const firstCellText = cells[0].textContent.trim().toLowerCase();
-                if (firstCellText === 'date') continue;
-                if (row.querySelector('table') || cells.some(c => c.textContent.trim().match(/^\d+$/) && cells.length <= 2)) {
-                    continue;
-                }
-                dataRows.push(row);
-            }
-            
-            if (rowIndex >= dataRows.length) return false;
-            const cell = dataRows[rowIndex].querySelectorAll('td')[0];
-            const clickTarget = cell.querySelector('a') || cell;
-            clickTarget.click();
-            return true;
-        }
-        """
-        
-        scroll_modal_js = r"""
-        () => {
-            const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-                el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-            );
-            if (headers.length === 0) return false;
-            
-            let container = null;
-            let parent = headers[0].parentElement;
-            while (parent && parent.tagName !== 'BODY') {
-                if (parent.querySelector('input[type="button"][value="Close"]') || parent.innerText.includes('Ticket Number')) {
-                    container = parent;
-                    break;
-                }
-                parent = parent.parentElement;
-            }
-            
-            if (!container) container = document;
-            
-            let scrolled = false;
-            const allElements = container.querySelectorAll('*');
-            for (const el of allElements) {
-                if (el.scrollHeight > el.clientHeight && 
-                    (window.getComputedStyle(el).overflowY === 'auto' || 
-                     window.getComputedStyle(el).overflowY === 'scroll' ||
-                     el.style.overflow === 'auto' ||
-                     el.style.overflow === 'scroll')) {
-                    el.scrollTop = el.scrollHeight;
-                    scrolled = true;
-                }
-            }
-            return scrolled;
-        }
-        """
-        
-        extract_modal_data_js = r"""
-        () => {
-            const targets = [
-                "Title", "Ticket Number", "Account Name", "Status", "Case Origin", 
-                "Customer Name", "Mobile No", "Category", "Sub Sub Category", 
-                "Assigned Date", "Estimated closed time based on SLA", 
-                "Estimated closed time based on TAT", "User Id", "Created Date", 
-                "Last Modified Date", "Associated Location Status", "Latitude", 
-                "Case Reason", "Assign Team", "Assign User", "Priority", "Type", 
-                "Customer Address", "Email", "Sub Category", "Escalated Layer", 
-                "SLA", "SLA Left/Total", "TAT Left/Total", "Created By", 
-                "Last Modified By", "Associated Location Level", 
-                "Associated Location Name", "Longitude"
-            ];
-            
-            const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-                el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-            );
-            
-            let container = null;
-            if (headers.length > 0) {
-                let parent = headers[0].parentElement;
-                while (parent && parent.tagName !== 'BODY') {
-                    if (parent.querySelector('input[type="button"][value="Close"]') || parent.innerText.includes('Ticket Number')) {
-                        container = parent;
-                        break;
-                    }
-                    parent = parent.parentElement;
-                }
-            }
-            if (!container) container = document;
-            
-            const data = {};
-            const cells = Array.from(container.querySelectorAll('td'));
-            
-            for (const target of targets) {
-                const foundCell = cells.find(c => {
-                    const text = c.textContent ? c.textContent.trim().replace(/\s+/g, ' ') : '';
-                    return text === target || text === target + ':' || text === target + ' :';
-                });
-                
-                if (foundCell) {
-                    const nextCell = foundCell.nextElementSibling;
-                    if (nextCell && nextCell.tagName === 'TD') {
-                        data[target] = nextCell.textContent.trim();
-                    } else {
-                        const row = foundCell.closest('tr');
-                        if (row) {
-                            const rowCells = Array.from(row.querySelectorAll('td'));
-                            const idx = rowCells.indexOf(foundCell);
-                            if (idx !== -1 && idx + 1 < rowCells.length) {
-                                data[target] = rowCells[idx + 1].textContent.trim();
-                            }
-                        }
-                    }
-                } else {
-                    const divs = Array.from(container.querySelectorAll('div, span, label'));
-                    const foundDiv = divs.find(d => {
-                        const text = d.textContent ? d.textContent.trim().replace(/\s+/g, ' ') : '';
-                        return (text === target || text === target + ':') && d.children.length === 0 && d.offsetWidth > 0;
-                    });
-                    if (foundDiv) {
-                        let next = foundDiv.nextElementSibling;
-                        if (next) {
-                            data[target] = next.textContent.trim();
-                        }
-                    }
-                }
-            }
-
-            // Extract Solution Given / Work Log / Employee Remarks from modal text
-            let solutionGivenText = "";
-            let fullText = (container.innerText || container.textContent || "").trim();
-            
-            const solutionMatch = fullText.match(/Solution Given[\s\S]*/i);
-            if (solutionMatch) {
-                solutionGivenText = solutionMatch[0].replace(/^Solution Given\s*/i, '').replace(/Close\s*$/i, '').trim();
-            }
-            
-            data["Solution Given"] = solutionGivenText || "";
-            data["Employee Remark / Solution Note"] = solutionGivenText || fullText;
-            return data;
-        }
-        """
-        
-        close_modal_js = r"""
-        () => {
-            const buttons = Array.from(document.querySelectorAll('input[type="button"], button, a')).filter(el => 
-                el.offsetWidth > 0
-            );
-            const closeBtn = buttons.find(el => {
-                const val = (el.value || el.textContent || '').trim().toLowerCase();
-                return val === 'close';
-            });
-            if (closeBtn) {
-                closeBtn.click();
-                return true;
-            }
-            return false;
-        }
-        """
-        
-        get_pagination_info_js = r"""
-        () => {
-            const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
-                              document.querySelector('table[id*="gdhistory" i]') || 
-                              document.querySelector('table.table2');
-            if (!gridTable) return null;
-            
-            let links = Array.from(gridTable.querySelectorAll('a[id*="lnbPg"], span[id*="lnbPg"]'));
-            if (links.length === 0) {
-                const rows = Array.from(gridTable.querySelectorAll('tr'));
-                if (rows.length > 0) {
-                    const lastRow = rows[rows.length - 1];
-                    const candidateLinks = Array.from(lastRow.querySelectorAll('a, span'));
-                    links = candidateLinks.filter(el => {
-                        const txt = el.textContent.trim();
-                        return /^\d+$/.test(txt) || txt === '...';
-                    });
-                }
-            }
-            
-            if (links.length <= 1) return null;
-
-            return links.map(el => {
-                const text = el.textContent.trim();
-                const hasHref = el.hasAttribute('href') && el.getAttribute('href').length > 0;
-                const isDisabled = el.classList.contains('aspNetDisabled') || !hasHref;
-                return {
-                    text: text,
-                    active: isDisabled,
-                    clickable: !isDisabled && hasHref
-                };
-            }).filter(item => /^\d+$/.test(item.text) || item.text === '...');
-        }
-        """
-        
-        click_page_js = r"""
-        (pageNumStr) => {
-            const gridTable = document.getElementById('ContentPlaceHolder1_gdhistory') || 
-                              document.querySelector('table[id*="gdhistory" i]') || 
-                              document.querySelector('table.table2');
-            if (!gridTable) return false;
-            
-            const links = Array.from(gridTable.querySelectorAll('a'));
-            
-            // 1. Check for exact page number
-            let targetLink = links.find(el => {
-                const txt = el.textContent.trim();
-                return txt === String(pageNumStr) && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled');
-            });
-            
-            // 2. If page number not directly visible, click the trailing ellipsis (Next set of 10 pages)
-            if (!targetLink) {
-                const ellipsisLinks = links.filter(el => el.textContent.trim() === '...' && el.hasAttribute('href') && !el.classList.contains('aspNetDisabled'));
-                if (ellipsisLinks.length > 0) {
-                    targetLink = ellipsisLinks[ellipsisLinks.length - 1];
-                }
-            }
-            
-            if (targetLink) {
-                targetLink.click();
-                return true;
-            }
-            return false;
-        }
-        """
-
-        # Prepare list of target employees
-        if ',' in employee_name:
-            emp_list = [e.strip() for e in employee_name.split(',') if e.strip()]
-        else:
-            emp_list = [employee_name.strip()]
-
-        scraped_records = []
-        
-        for emp_idx, target_emp in enumerate(emp_list):
-            log(f"============================================================")
-            log(f"--- Starting audit scrape for Employee {emp_idx+1}/{len(emp_list)}: {target_emp} ---")
-            log(f"============================================================")
-            
-            # Auto-configure grid dropdowns
-            log(f"Auto-applying dropdown filters for '{target_emp}' (AuditFor='Employee', Module='Case', Operation='Update')...")
-            for attempt in range(10):
-                step = page.evaluate(automate_selects_js, ["Employee", "Case", "Update", target_emp])
-                log(f"Select configuration status: {step}")
-                if step == "done":
-                    break
-                wait_for_postback(page)
-                page.wait_for_timeout(500)
-                safe_wait_for_networkidle(page, 5000)
-
-            active_selected_text = page.evaluate("""() => {
-                const s = document.getElementById('ContentPlaceHolder1_combouserddl');
-                return s ? (s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : '') : '';
-            }""")
-            log(f"Verified active dropdown selection: '{active_selected_text}' (Target was: '{target_emp}')")
-                
-            # Set Dates
-            log(f"Auto-setting date inputs (From: {from_date}, To: {to_date})...")
-            dates_set = page.evaluate(set_date_inputs_js, [from_date, to_date])
-            if not dates_set:
-                log("Could not find date inputs to modify. Please adjust dates manually in browser if incorrect.", "WARNING")
-            page.wait_for_timeout(500)
-            
-            # Click search
-            log(f"Submitting query for {target_emp}...")
-            searched = page.evaluate(click_search_js)
-            if searched:
-                wait_for_postback(page)
-                page.wait_for_timeout(1500)
-                safe_wait_for_networkidle(page, 8000)
-            else:
-                log("Search button not found. Please click Search in the browser manually.", "WARNING")
-                page.wait_for_timeout(3000)
-
-            # Safe-guard if search is slow
-            try:
-                page.locator('table').first.wait_for(state="visible", timeout=6000)
-            except Exception:
-                pass
-
-            page_num = 1
-            while True:
-                log(f"[{target_emp}] Scanning page {page_num}...")
-                
-                has_grid = page.evaluate(find_grid_table_js)
-                if not has_grid:
-                    log("Grid table not found! Wait 2 seconds and check again...", "WARNING")
-                    page.wait_for_timeout(2000)
-                    has_grid = page.evaluate(find_grid_table_js)
-                    if not has_grid:
-                        log(f"No grid table found for {target_emp}.", "INFO")
-                        break
-                    
-                rows_count = page.evaluate(get_rows_count_js)
-                log(f"[{target_emp}] Found {rows_count} records on page {page_num}.")
-                
-                if rows_count == 0:
-                    log(f"[{target_emp}] No data records found on page {page_num}.")
-                    break
-                    
-                for i in range(rows_count):
-                    row_info = page.evaluate(get_row_data_js, i)
-                    if not row_info:
-                        log(f"[{target_emp}] Could not extract row info for record index {i+1}", "WARNING")
-                        continue
-                    
-                    log(f"[{target_emp}] Record {i+1}/{rows_count} (Page {page_num}): Date='{row_info['date']}' | User='{row_info['userName']}' | Employee='{row_info['employeeName']}' | Remark='{row_info['remark']}'")
-                    
-                    # Click row link to open modal
-                    clicked = page.evaluate(click_row_link_js, i)
-                    if not clicked:
-                        log(f"[{target_emp}] Failed to click popup link for row {i+1}", "WARNING")
-                        continue
-                    
-                    # Wait for ASP.NET postback
-                    wait_for_postback(page)
-                    page.wait_for_timeout(100)
-                    
-                    # Wait for modal frame to appear
-                    modal_frame = None
-                    for _ in range(30):
-                        # Fast-path: check direct ASP.NET iframe name first
-                        direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
-                        candidate_frames = [direct_f] if direct_f else page.frames
-                        for frame in candidate_frames:
-                            if not frame:
-                                continue
-                            try:
-                                has_header = frame.evaluate(r"""
-                                () => {
-                                    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-                                        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-                                    );
-                                    return headers.length > 0;
-                                }
-                                """)
-                                if has_header:
-                                    modal_frame = frame
-                                    break
-                            except Exception:
-                                pass
-                        if modal_frame:
-                            break
-                        page.wait_for_timeout(40)
-
-                    if not modal_frame:
-                        log(f"[{target_emp}] Timeout waiting for 'Case Information' popup to open inside iframe for record {i+1}", "WARNING")
-                        try:
-                            frame = page.frame(name="ContentPlaceHolder1_ifrm")
-                            if frame:
-                                frame.evaluate(close_modal_js)
-                        except Exception:
-                            pass
-                        continue
-                    
-                    # Scroll modal inside the frame
-                    try:
-                        modal_frame.evaluate(scroll_modal_js)
-                    except Exception:
-                        pass
-                    page.wait_for_timeout(50)
-                    
-                    # Extract details from the frame
-                    modal_data = {}
-                    try:
-                        modal_data = modal_frame.evaluate(extract_modal_data_js)
-                    except Exception as extract_err:
-                        log(f"Extraction error: {extract_err}", "ERROR")
-                    
-                    # Close the modal inside the frame
-                    closed = False
-                    try:
-                        closed = modal_frame.evaluate(close_modal_js)
-                    except Exception:
-                        pass
-                        
-                    if not closed:
-                        try:
-                            modal_frame.locator('text=Close').first.click(timeout=1500)
-                        except Exception:
-                            log("Could not close the modal.", "ERROR")
-                    
-                    # Wait for close postback to complete
-                    wait_for_postback(page)
-                    
-                    modal_closed = False
-                    for _ in range(30):
-                        try:
-                            is_visible = page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible()
-                            if not is_visible:
-                                modal_closed = True
-                                break
-                        except Exception:
-                            modal_closed = True
-                            break
-                        page.wait_for_timeout(50)
-
-                    combined_record = {
-                        "Target Employee": target_emp,
-                        "Grid Date": row_info["date"],
-                        "Grid User Name": row_info["userName"],
-                        "Grid Employee Name": row_info["employeeName"],
-                        "Grid Module": row_info["moduleName"],
-                        "Grid Operation": row_info["operation"],
-                        "Grid IP Address": row_info["ipAddress"],
-                        "Grid Remark": row_info["remark"],
-                        **modal_data
-                    }
-                    scraped_records.append(combined_record)
-                    page.wait_for_timeout(50)
-                    
-                # Check pagination
-                pagination_items = page.evaluate(get_pagination_info_js)
-                if not pagination_items:
-                    log(f"[{target_emp}] No pagination elements found. Single page audit.")
-                    break
-                    
-                active_item = next((item for item in pagination_items if item["active"]), None)
-                if not active_item:
-                    log(f"[{target_emp}] No active page marked. Assuming page iteration completed.", "INFO")
-                    break
-                    
-                current_page_val = int(active_item["text"]) if active_item["text"].isdigit() else page_num
-                next_page_val = current_page_val + 1
-                
-                # Check for direct next page number link or trailing ellipsis '...'
-                has_next_number = any(item["text"] == str(next_page_val) and item["clickable"] for item in pagination_items)
-                has_next_ellipsis = any(item["text"] == "..." and item["clickable"] for item in pagination_items)
-                
-                if has_next_number or has_next_ellipsis:
-                    log(f"[{target_emp}] Navigating to next page: Page {next_page_val}...")
-                    
-                    first_row_before = page.evaluate(get_row_data_js, 0)
-                    date_before = first_row_before["date"] if first_row_before else ""
-                    
-                    page.evaluate(click_page_js, str(next_page_val))
-                    wait_for_postback(page)
-                    page.wait_for_timeout(500)
-                    safe_wait_for_networkidle(page, 4000)
-                    
-                    post_pagination = page.evaluate(get_pagination_info_js)
-                    new_active = next((item for item in post_pagination if item["active"]), None) if post_pagination else None
-                    first_row_after = page.evaluate(get_row_data_js, 0)
-                    date_after = first_row_after["date"] if first_row_after else ""
-                    
-                    if (new_active and new_active["text"].isdigit() and int(new_active["text"]) >= next_page_val) or (date_before != date_after):
-                        page_num = int(new_active["text"]) if (new_active and new_active["text"].isdigit()) else next_page_val
-                        log(f"[{target_emp}] Loaded Page {page_num} successfully.")
-                    else:
-                        log(f"[{target_emp}] Completed all available pages up to Page {current_page_val}.", "INFO")
-                        break
-                else:
-                    log(f"[{target_emp}] Reached the last page (Page {current_page_val}). All pages extracted successfully.")
-                    break
-            
-            log(f"[SUCCESS] Finished scraping all audit records for {target_emp}.")
-            page.wait_for_timeout(1000)
-                
-        log("Scraping completed. Closing browser.")
-        browser.close()
-        
-        # --- Post-Processing & Report Generation ---
+    # --- Post-Processing & Report Generation ---
         if not scraped_records:
             log("No records were scraped. Unable to generate report.", "ERROR")
             return

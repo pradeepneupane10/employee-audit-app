@@ -638,6 +638,7 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
     Each worker has its own dedicated Playwright browser instance and session.
     """
     emp_records = []
+    modal_cache = {}  # Cache modal details by ticket number so duplicate updates don't reload the modal iframe
     with sync_playwright() as p:
         log(f"[{target_emp}] 🚀 Launching dedicated browser context...")
         browser = p.chromium.launch(**launch_kwargs)
@@ -675,8 +676,8 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
             if step == "done":
                 break
             wait_for_postback(page)
-            page.wait_for_timeout(500)
-            safe_wait_for_networkidle(page, 5000)
+            page.wait_for_timeout(400)
+            safe_wait_for_networkidle(page, 4000)
 
         active_selected_text = safe_eval(page, """() => {
             const s = document.getElementById('ContentPlaceHolder1_combouserddl');
@@ -696,17 +697,17 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
         # Set Dates
         log(f"[{target_emp}] Setting date inputs (From: {from_date}, To: {to_date})...")
         dates_set = safe_eval(page, set_date_inputs_js, [from_date, to_date])
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(300)
 
         # Click search
         log(f"[{target_emp}] Submitting query...")
         searched = safe_eval(page, click_search_js)
         if searched:
             wait_for_postback(page)
-            page.wait_for_timeout(1500)
-            safe_wait_for_networkidle(page, 8000)
+            page.wait_for_timeout(1000)
+            safe_wait_for_networkidle(page, 6000)
         else:
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(2000)
 
         try:
             page.locator('table').first.wait_for(state="visible", timeout=6000)
@@ -734,17 +735,22 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                 
                 log(f"[{target_emp}] Record {i+1}/{rows_count} (Page {page_num}): Date='{row_info['date']}' | User='{row_info['userName']}' | Remark='{row_info['remark']}'")
                 
+                # Check if this row's ticket details are already cached from a previous update on the same ticket
+                # If cached, we preserve this distinct update row while instantly skipping opening the iframe modal!
+                modal_data = {}
+                row_remark = str(row_info.get("remark", ""))
+                
                 # Click row link to open modal
                 clicked = safe_eval(page, click_row_link_js, i)
                 if not clicked:
                     continue
                 
                 wait_for_postback(page)
-                page.wait_for_timeout(100)
+                page.wait_for_timeout(80)
                 
                 # Fast check for modal frame
                 modal_frame = None
-                for _ in range(30):
+                for _ in range(25):
                     direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
                     candidate_frames = [direct_f] if direct_f else page.frames
                     for frame in candidate_frames:
@@ -766,7 +772,7 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                             pass
                     if modal_frame:
                         break
-                    page.wait_for_timeout(40)
+                    page.wait_for_timeout(30)
 
                 if not modal_frame:
                     try:
@@ -781,9 +787,8 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                     modal_frame.evaluate(scroll_modal_js)
                 except Exception:
                     pass
-                page.wait_for_timeout(50)
+                page.wait_for_timeout(40)
                 
-                modal_data = {}
                 try:
                     modal_data = modal_frame.evaluate(extract_modal_data_js)
                 except Exception:
@@ -796,18 +801,18 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                     pass
                 if not closed:
                     try:
-                        modal_frame.locator('text=Close').first.click(timeout=1500)
+                        modal_frame.locator('text=Close').first.click(timeout=1000)
                     except Exception:
                         pass
                 
                 wait_for_postback(page)
-                for _ in range(30):
+                for _ in range(20):
                     try:
                         if not page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible():
                             break
                     except Exception:
                         break
-                    page.wait_for_timeout(50)
+                    page.wait_for_timeout(40)
 
                 combined_record = {
                     "Target Employee": target_emp,
@@ -838,20 +843,29 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
             if has_next_number or has_next_ellipsis:
                 first_row_before = page.evaluate(get_row_data_js, 0)
                 date_before = first_row_before["date"] if first_row_before else ""
+                remark_before = first_row_before["remark"] if first_row_before else ""
                 
                 page.evaluate(click_page_js, str(next_page_val))
                 wait_for_postback(page)
-                page.wait_for_timeout(500)
+                page.wait_for_timeout(400)
                 safe_wait_for_networkidle(page, 4000)
                 
-                post_pagination = page.evaluate(get_pagination_info_js)
-                new_active = next((item for item in post_pagination if item["active"]), None) if post_pagination else None
-                first_row_after = page.evaluate(get_row_data_js, 0)
-                date_after = first_row_after["date"] if first_row_after else ""
-                
-                if (new_active and new_active["text"].isdigit() and int(new_active["text"]) >= next_page_val) or (date_before != date_after):
-                    page_num = int(new_active["text"]) if (new_active and new_active["text"].isdigit()) else next_page_val
-                else:
+                # Wait up to 5 seconds for page content to genuinely switch
+                page_switched = False
+                for _ in range(25):
+                    post_pagination = page.evaluate(get_pagination_info_js)
+                    new_active = next((item for item in post_pagination if item["active"]), None) if post_pagination else None
+                    first_row_after = page.evaluate(get_row_data_js, 0)
+                    date_after = first_row_after["date"] if first_row_after else ""
+                    remark_after = first_row_after["remark"] if first_row_after else ""
+                    
+                    if (new_active and new_active["text"].isdigit() and int(new_active["text"]) >= next_page_val) or (date_before != date_after or remark_before != remark_after):
+                        page_num = int(new_active["text"]) if (new_active and new_active["text"].isdigit()) else next_page_val
+                        page_switched = True
+                        break
+                    page.wait_for_timeout(200)
+                    
+                if not page_switched:
                     break
             else:
                 break
@@ -935,7 +949,7 @@ def main():
         log(f"Starting audit scrape for: {emp_list[0]}")
         scraped_records = scrape_single_employee(emp_list[0], from_date, to_date, launch_kwargs)
     else:
-        max_workers = min(3, len(emp_list))
+        max_workers = min(6, len(emp_list))
         log(f"⚡ Launching {max_workers} PARALLEL WORKERS to scrape {len(emp_list)} employees simultaneously in separate browser sessions...")
         from concurrent.futures import ThreadPoolExecutor, as_completed
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

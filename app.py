@@ -189,7 +189,7 @@ with st.sidebar:
     date_preset = st.radio(
         "Quick Range", 
         ["Today", "Yesterday & Today (2 Days)", "Last 7 Days", "Last 30 Days", "Full Current Month", "Previous Month", "Custom Range"], 
-        index=1
+        index=0
     )
     
     if date_preset == "Today":
@@ -215,14 +215,17 @@ with st.sidebar:
     else:
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            from_date_obj = st.date_input("From Date", value=yesterday)
+            from_date_obj = st.date_input("From Date", value=today)
         with col_d2:
             to_date_obj = st.date_input("To Date", value=today)
 
     from_date_str = from_date_obj.strftime("%d %b %Y")  # e.g., "01 Aug 2026"
     to_date_str = to_date_obj.strftime("%d %b %Y")      # e.g., "31 Aug 2026"
 
-    st.markdown(f"**Target Period:** `{from_date_str}` to `{to_date_str}`")
+    if from_date_str == to_date_str:
+        st.success(f"🎯 **Target Date:** `{from_date_str}` (Today's updates only)")
+    else:
+        st.info(f"📅 **Target Period:** `{from_date_str}` to `{to_date_str}`")
     st.markdown("---")
     
     run_btn = st.button("🚀 Run Audit Scraper", type="primary", use_container_width=True)

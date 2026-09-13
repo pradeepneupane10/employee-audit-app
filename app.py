@@ -378,7 +378,7 @@ with main_mode_tab1:
                     st.session_state["last_run_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 else:
                     import glob
-                    matching_files = glob.glob(f"audit_report_*{safe_from}*.xlsx")
+                    matching_files = glob.glob(f"audit_report_{safe_emp}_*.xlsx")
                     if matching_files:
                         st.session_state["last_output_file"] = matching_files[0]
                         st.session_state["last_run_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

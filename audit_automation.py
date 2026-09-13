@@ -244,16 +244,20 @@ automate_selects_js = r"""
         s.id.includes('user') || Array.from(s.options).some(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget)
     );
     if (employeeSelect) {
-        // Try exact match first
+        // 1. Exact match first
         let opt = Array.from(employeeSelect.options).find(o => o.text.toLowerCase().replace(/\s+/g, ' ').trim() === cleanTarget);
-        // Fallback: match full name or any distinctive name word (e.g. Shashikant)
+        
+        // 2. Strict multi-word matching: ALL words (first name AND last name) must be present in the option
         if (!opt) {
-            const targetWords = cleanTarget.split(' ').filter(w => w.length > 2);
-            opt = Array.from(employeeSelect.options).find(o => {
-                const optText = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
-                return optText.includes(cleanTarget) || cleanTarget.includes(optText) || (targetWords.length > 0 && targetWords.some(w => optText.includes(w)));
-            });
+            const targetWords = cleanTarget.split(' ').filter(w => w.length > 1);
+            if (targetWords.length > 1) {
+                opt = Array.from(employeeSelect.options).find(o => {
+                    const optText = o.text.toLowerCase().replace(/\s+/g, ' ').trim();
+                    return targetWords.every(w => optText.includes(w));
+                });
+            }
         }
+        
         if (opt && employeeSelect.value !== opt.value) {
             employeeSelect.value = opt.value;
             employeeSelect.dispatchEvent(new Event('change', { bubbles: true }));
@@ -680,6 +684,15 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
         }""")
         log(f"[{target_emp}] Active dropdown: '{active_selected_text}'")
 
+        # HARD SAFETY GUARD: verify active dropdown matches target employee
+        active_clean = str(active_selected_text or '').strip().lower()
+        target_words = [w for w in target_emp.strip().lower().split() if len(w) > 1]
+        is_match = all(w in active_clean for w in target_words) if target_words else (target_emp.lower() in active_clean)
+        if not is_match:
+            log(f"[{target_emp}] ⚠️ ERROR: Dropdown shows '{active_selected_text}', which does NOT match target '{target_emp}'. Aborting scrape for this employee to prevent corrupting data!", "ERROR")
+            browser.close()
+            return []
+
         # Set Dates
         log(f"[{target_emp}] Setting date inputs (From: {from_date}, To: {to_date})...")
         dates_set = safe_eval(page, set_date_inputs_js, [from_date, to_date])
@@ -949,6 +962,15 @@ def main():
         log(f"Scraped {len(scraped_records)} total audit records. Compiling report...")
         
         df = pd.DataFrame(scraped_records)
+        
+        # Deduplicate audit log actions on the exact same ticket for an employee (keep the latest status & remark)
+        if 'Ticket Number' in df.columns:
+            emp_k = 'Target Employee' if 'Target Employee' in df.columns else 'Grid Employee Name'
+            if emp_k in df.columns:
+                tot_before = len(df)
+                df = df.drop_duplicates(subset=[emp_k, 'Ticket Number'], keep='last').copy()
+                if len(df) < tot_before:
+                    log(f"Filtered {tot_before - len(df)} duplicate audit updates on same tickets. Unique tickets: {len(df)}")
         
         required_cols = ['Ticket Number', 'Status', 'Category', 'Sub Category', 'Assigned Date', 'Created Date', 'Last Modified Date']
         for col in required_cols:

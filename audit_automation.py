@@ -963,15 +963,6 @@ def main():
         
         df = pd.DataFrame(scraped_records)
         
-        # Deduplicate audit log actions on the exact same ticket for an employee (keep the latest status & remark)
-        if 'Ticket Number' in df.columns:
-            emp_k = 'Target Employee' if 'Target Employee' in df.columns else 'Grid Employee Name'
-            if emp_k in df.columns:
-                tot_before = len(df)
-                df = df.drop_duplicates(subset=[emp_k, 'Ticket Number'], keep='last').copy()
-                if len(df) < tot_before:
-                    log(f"Filtered {tot_before - len(df)} duplicate audit updates on same tickets. Unique tickets: {len(df)}")
-        
         required_cols = ['Ticket Number', 'Status', 'Category', 'Sub Category', 'Assigned Date', 'Created Date', 'Last Modified Date']
         for col in required_cols:
             if col not in df.columns:

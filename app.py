@@ -285,11 +285,11 @@ def classify_work_type(row):
     
     full_text = f"{title} {remark} {solution} {employee_note}".upper()
     
-    # Check for 'ALCLFE' (WiFi 6 Serial Number prefix) or Old/New SN router upgrade remarks
+    # Robust WiFi 6 detection (Title, Category, Sub Category, Remark, Solution Note, Serial Number)
+    wifi6_regex = r'wifi\s*6|wifi-6|wifi6|wi-fi\s*6|router\s*6|alcl|nokia.*wifi|upgrade.*wifi|wifi.*upgrade|dual\s*band'
     is_wifi6_upgrade = (
-        'ALCLFE' in full_text or
-        ('WIFI 6' in full_text and ('OLD' in full_text or 'NEW' in full_text or 'UPGRADE' in full_text or 'UPGARDE' in full_text or 'SN' in full_text)) or
-        ('WIFI' in full_text and 'ALCL' in full_text)
+        bool(re.search(wifi6_regex, full_text, re.I)) or
+        'WIFI 6' in full_text or 'WIFI-6' in full_text or 'WIFI6' in full_text or 'ALCL' in full_text
     )
     
     if is_wifi6_upgrade:
@@ -470,50 +470,52 @@ with main_mode_tab1:
                 # Always build dynamically from the current active df_details to guarantee 100% match with the screen
                 if "Employee Name" not in df_details.columns and emp_name_col in df_details.columns:
                     df_details["Employee Name"] = df_details[emp_name_col]
+                elif "Employee Name" not in df_details.columns:
+                    df_details["Employee Name"] = df_details.get("Target Employee", "Team Member")
                         
-                    def is_solved_row(row):
-                        st_val = str(row.get("Status", "")).strip().lower()
-                        rm_val = str(row.get("Grid Remark", "")).strip().lower()
-                        if st_val in ["completed", "closed"]:
-                            return True
-                        if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
-                            return True
-                        return False
+                def is_solved_row(row):
+                    st_val = str(row.get("Status", "")).strip().lower()
+                    rm_val = str(row.get("Grid Remark", "")).strip().lower()
+                    if st_val in ["completed", "closed"]:
+                        return True
+                    if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
+                        return True
+                    return False
 
-                    df_details["Is_Solved_Val"] = df_details.apply(is_solved_row, axis=1)
-                    
-                    summary_rows = []
-                    for emp, grp in df_details.groupby("Employee Name"):
-                        tot = len(grp)
-                        solved = grp["Is_Solved_Val"].sum()
-                        rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
-                        summary_rows.append({
-                            "Employee Name": emp,
-                            "Total Scraped Tickets": tot,
-                            "Solved / Handled Count": solved,
-                            "Solution Rate %": rate
-                        })
-                    team_summary_df = pd.DataFrame(summary_rows)
-                    tot_tickets_team = len(df_details)
-                    tot_solved_team = df_details["Is_Solved_Val"].sum()
-                    team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
-                    total_team_row = pd.DataFrame([{
-                        "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
-                        "Total Scraped Tickets": tot_tickets_team,
-                        "Solved / Handled Count": tot_solved_team,
-                        "Solution Rate %": team_rate_val
-                    }])
-                    team_summary_df = pd.concat([team_summary_df, total_team_row], ignore_index=True)
-                    
-                    work_summary_df = df_details.groupby("Task / Issue Type", dropna=False).agg(
-                        Total_Tickets=("Ticket Number", "count"),
-                        Solved_Count=("Is_Solved_Val", "sum")
-                    ).reset_index()
-                    work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
-                    work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(df_details) * 100).round(1).astype(str) + '%'
-                    
-                    export_master = df_details.drop(columns=["Is_Solved_Val"], errors="ignore")
-                    exec_bytes = build_executive_team_excel(export_master, team_summary_df, work_summary_df)
+                df_details["Is_Solved_Val"] = df_details.apply(is_solved_row, axis=1)
+                
+                summary_rows = []
+                for emp, grp in df_details.groupby("Employee Name"):
+                    tot = len(grp)
+                    solved = grp["Is_Solved_Val"].sum()
+                    rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
+                    summary_rows.append({
+                        "Employee Name": emp,
+                        "Total Scraped Tickets": tot,
+                        "Solved / Handled Count": solved,
+                        "Solution Rate %": rate
+                    })
+                team_summary_df = pd.DataFrame(summary_rows)
+                tot_tickets_team = len(df_details)
+                tot_solved_team = df_details["Is_Solved_Val"].sum()
+                team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
+                total_team_row = pd.DataFrame([{
+                    "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
+                    "Total Scraped Tickets": tot_tickets_team,
+                    "Solved / Handled Count": tot_solved_team,
+                    "Solution Rate %": team_rate_val
+                }])
+                team_summary_df = pd.concat([team_summary_df, total_team_row], ignore_index=True)
+                
+                work_summary_df = df_details.groupby("Task / Issue Type", dropna=False).agg(
+                    Total_Tickets=("Ticket Number", "count"),
+                    Solved_Count=("Is_Solved_Val", "sum")
+                ).reset_index()
+                work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
+                work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(df_details) * 100).round(1).astype(str) + '%'
+                
+                export_master = df_details.drop(columns=["Is_Solved_Val"], errors="ignore")
+                exec_bytes = build_executive_team_excel(export_master, team_summary_df, work_summary_df)
 
                 st.download_button(
                     label=f"⬇️ Download Combined Executive Team Report ({exec_file_name})",

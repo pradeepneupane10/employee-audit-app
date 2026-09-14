@@ -632,13 +632,12 @@ click_page_js = r"""
 """
 
 
-def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs, shared_modal_cache=None):
+def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
     """
     Worker function executed in parallel threads or sequentially.
     Each worker has its own dedicated Playwright browser instance and session.
     """
     emp_records = []
-    modal_cache = shared_modal_cache if shared_modal_cache is not None else {}
     with sync_playwright() as p:
         log(f"[{target_emp}] 🚀 Launching dedicated browser context...")
         browser = p.chromium.launch(**launch_kwargs)
@@ -735,93 +734,80 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs, shared
                 
                 log(f"[{target_emp}] Record {i+1}/{rows_count} (Page {page_num}): Date='{row_info['date']}' | User='{row_info['userName']}' | Remark='{row_info['remark']}'")
                 
-                # Check if this row's ticket details are already cached from a previous update on the same ticket
-                # If cached, we preserve this distinct update row while instantly skipping opening the iframe modal!
-                modal_data = {}
-                row_remark = str(row_info.get("remark", ""))
+                # Click row link to open modal
+                clicked = safe_eval(page, click_row_link_js, i)
+                if not clicked:
+                    continue
                 
-                # Check for cached ticket details from remark regex (e.g. Case: 12345 or Ticket: 12345 or 6-10 digit ticket number)
-                remark_match = re.search(r'(?:case|ticket|no|#)?\s*[:\-#]?\s*(\d{5,10})', row_remark, re.I)
-                potential_ticket_key = remark_match.group(1) if remark_match else None
+                wait_for_postback(page, timeout_ms=4000)
+                page.wait_for_timeout(50)
                 
-                if potential_ticket_key and potential_ticket_key in modal_cache:
-                    modal_data = modal_cache[potential_ticket_key].copy()
-                    log(f"[{target_emp}] ⚡ Instant Cache Hit for Ticket #{potential_ticket_key} (Bypassing modal iframe)")
-                else:
-                    # Click row link to open modal
-                    clicked = safe_eval(page, click_row_link_js, i)
-                    if not clicked:
-                        continue
-                    
-                    wait_for_postback(page, timeout_ms=3000)
-                    
-                    # Fast check for modal frame
-                    modal_frame = None
-                    for _ in range(20):
-                        direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
-                        candidate_frames = [direct_f] if direct_f else page.frames
-                        for frame in candidate_frames:
-                            if not frame:
-                                continue
-                            try:
-                                has_header = frame.evaluate(r"""
-                                () => {
-                                    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-                                        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-                                    );
-                                    return headers.length > 0;
-                                }
-                                """)
-                                if has_header:
-                                    modal_frame = frame
-                                    break
-                            except Exception:
-                                pass
-                        if modal_frame:
-                            break
-                        page.wait_for_timeout(25)
-
-                    if not modal_frame:
+                # Robust check for modal frame
+                modal_frame = None
+                for _ in range(35):
+                    direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
+                    candidate_frames = [direct_f] if direct_f else page.frames
+                    for frame in candidate_frames:
+                        if not frame:
+                            continue
                         try:
-                            frame = page.frame(name="ContentPlaceHolder1_ifrm")
-                            if frame:
-                                frame.evaluate(close_modal_js)
-                        except Exception:
-                            pass
-                        continue
-                    
-                    try:
-                        modal_data = modal_frame.evaluate(extract_modal_data_js)
-                    except Exception:
-                        pass
-                    
-                    # Cache this ticket's modal data for any subsequent updates across this session
-                    scraped_tkt = str(modal_data.get("Ticket Number", "")).strip()
-                    if scraped_tkt:
-                        modal_cache[scraped_tkt] = modal_data
-                    if potential_ticket_key:
-                        modal_cache[potential_ticket_key] = modal_data
-                    
-                    # Close modal swiftly
-                    closed = False
-                    try:
-                        closed = modal_frame.evaluate(close_modal_js)
-                    except Exception:
-                        pass
-                    if not closed:
-                        try:
-                            modal_frame.locator('text=Close').first.click(timeout=600)
-                        except Exception:
-                            pass
-                    
-                    wait_for_postback(page, timeout_ms=2000)
-                    for _ in range(15):
-                        try:
-                            if not page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible():
+                            has_header = frame.evaluate(r"""
+                            () => {
+                                const headers = Array.from(document.querySelectorAll('*')).filter(el => 
+                                    el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
+                                );
+                                return headers.length > 0;
+                            }
+                            """)
+                            if has_header:
+                                modal_frame = frame
                                 break
                         except Exception:
+                            pass
+                    if modal_frame:
+                        break
+                    page.wait_for_timeout(40)
+
+                if not modal_frame:
+                    try:
+                        frame = page.frame(name="ContentPlaceHolder1_ifrm")
+                        if frame:
+                            frame.evaluate(close_modal_js)
+                    except Exception:
+                        pass
+                    continue
+                
+                try:
+                    modal_frame.evaluate(scroll_modal_js)
+                except Exception:
+                    pass
+                page.wait_for_timeout(30)
+
+                try:
+                    modal_data = modal_frame.evaluate(extract_modal_data_js)
+                except Exception:
+                    pass
+                
+                # Close modal swiftly and reliably
+                closed = False
+                try:
+                    closed = modal_frame.evaluate(close_modal_js)
+                except Exception:
+                    pass
+                if not closed:
+                    try:
+                        modal_frame.locator('text=Close').first.click(timeout=800)
+                    except Exception:
+                        pass
+                
+                wait_for_postback(page, timeout_ms=3000)
+                for _ in range(20):
+                    try:
+                        if not page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible():
                             break
-                        page.wait_for_timeout(25)
+                    except Exception:
+                        break
+                    page.wait_for_timeout(30)
 
                 combined_record = {
                     "Target Employee": target_emp,
@@ -961,10 +947,9 @@ def main():
         max_workers = min(8, len(emp_list))
         log(f"⚡ Launching {max_workers} HIGH-SPEED PARALLEL WORKERS to scrape {len(emp_list)} employees simultaneously...")
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        shared_modal_cache = {}
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_emp = {
-                executor.submit(scrape_single_employee, emp, from_date, to_date, launch_kwargs, shared_modal_cache): emp
+                executor.submit(scrape_single_employee, emp, from_date, to_date, launch_kwargs): emp
                 for emp in emp_list
             }
             for future in as_completed(future_to_emp):
@@ -1051,11 +1036,11 @@ def main():
             
             full_text = f"{title} {remark} {solution} {employee_note}".upper()
             
-            # Check for 'ALCLFE' (WiFi 6 Serial Number prefix) or Old/New SN router upgrade remarks
+            # Robust WiFi 6 detection (Title, Category, Sub Category, Remark, Solution Note, Serial Number)
+            wifi6_regex = r'wifi\s*6|wifi-6|wifi6|wi-fi\s*6|router\s*6|alcl|nokia.*wifi|upgrade.*wifi|wifi.*upgrade|dual\s*band'
             is_wifi6_upgrade = (
-                'ALCLFE' in full_text or
-                ('WIFI 6' in full_text and ('OLD' in full_text or 'NEW' in full_text or 'UPGRADE' in full_text or 'UPGARDE' in full_text or 'SN' in full_text)) or
-                ('WIFI' in full_text and 'ALCL' in full_text)
+                bool(re.search(wifi6_regex, full_text, re.I)) or
+                'WIFI 6' in full_text or 'WIFI-6' in full_text or 'WIFI6' in full_text or 'ALCL' in full_text
             )
             
             if is_wifi6_upgrade:

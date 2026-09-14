@@ -539,12 +539,15 @@ with main_mode_tab1:
                 
                 matrix_cat_col = 'Sub Category' if 'Sub Category' in df_details.columns else 'Task / Issue Type'
                 df_details[matrix_cat_col] = df_details[matrix_cat_col].fillna('Other / Uncategorized')
+                df_excel_dedup = df_details.drop_duplicates(subset=['Ticket Number'], keep='first') if 'Ticket Number' in df_details.columns else df_details
                 matrix_pivot_excel = pd.crosstab(
-                    df_details[matrix_cat_col],
-                    df_details['Employee Name'],
+                    df_excel_dedup[matrix_cat_col],
+                    df_excel_dedup['Employee Name'],
                     margins=True,
                     margins_name="Grand Total"
                 )
+                cols_ex = [c for c in matrix_pivot_excel.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in matrix_pivot_excel.columns else [])
+                matrix_pivot_excel = matrix_pivot_excel[cols_ex]
                 if "Grand Total" in matrix_pivot_excel.index:
                     d_rows = matrix_pivot_excel.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
                     t_row = matrix_pivot_excel.loc[["Grand Total"]]
@@ -583,7 +586,7 @@ with main_mode_tab1:
                 st.subheader("👥 Technician Solved Tickets Breakdown (Pivot Table)")
                 st.caption("Exact category and sub-category ticket count solved per technician matching Excel Pivot Table layout.")
                 
-                col_p1, col_p2 = st.columns([3, 2])
+                col_p1, col_p2, col_p3 = st.columns([3, 2, 2])
                 with col_p1:
                     status_opts = sorted(df_details["Status"].dropna().unique().tolist()) if "Status" in df_details.columns else []
                     default_statuses = [s for s in status_opts if s.lower() in ["completed", "closed"]]
@@ -601,12 +604,21 @@ with main_mode_tab1:
                         options=["Sub Category", "Task / Issue Type", "Category"],
                         index=0
                     )
+                with col_p3:
+                    dedup_choice = st.checkbox(
+                        "Remove Duplicate Tickets (Unique Only)",
+                        value=True,
+                        help="Prevents double-counting tickets that have multiple updates on the same day"
+                    )
                 
                 # Filter dataset for matrix
                 if chosen_statuses and "Status" in df_details.columns:
                     matrix_filtered = df_details[df_details["Status"].isin(chosen_statuses)].copy()
                 else:
                     matrix_filtered = df_details.copy()
+
+                if dedup_choice and "Ticket Number" in matrix_filtered.columns:
+                    matrix_filtered = matrix_filtered.drop_duplicates(subset=["Ticket Number"], keep="first")
                     
                 actual_breakdown_col = breakdown_col_choice if breakdown_col_choice in matrix_filtered.columns else "Task / Issue Type"
                 actual_emp_col = "Employee Name" if "Employee Name" in matrix_filtered.columns else ("Target Employee" if "Target Employee" in matrix_filtered.columns else "Grid Employee Name")
@@ -621,7 +633,11 @@ with main_mode_tab1:
                         margins_name="Grand Total"
                     )
                     
-                    # Sort rows by Grand Total descending (keep Grand Total at bottom)
+                    # Ensure Grand Total is strictly the LAST column on the right
+                    ordered_cols = [c for c in pivot_table.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in pivot_table.columns else [])
+                    pivot_table = pivot_table[ordered_cols]
+                    
+                    # Sort rows by Grand Total descending (keep Grand Total strictly at bottom)
                     if "Grand Total" in pivot_table.index:
                         data_rows = pivot_table.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
                         total_row = pivot_table.loc[["Grand Total"]]
@@ -629,7 +645,7 @@ with main_mode_tab1:
                     else:
                         sorted_pivot = pivot_table
                         
-                    st.markdown(f"**Showing `{len(matrix_filtered)}` tickets across `{len(sorted_pivot.index) - 1}` categories:**")
+                    st.markdown(f"**Showing `{len(matrix_filtered)}` {'unique tickets' if dedup_choice else 'scraped log events'} across `{len(sorted_pivot.index) - 1}` categories:**")
                     st.dataframe(sorted_pivot, use_container_width=True)
                     
                     pivot_csv = sorted_pivot.to_csv().encode('utf-8')

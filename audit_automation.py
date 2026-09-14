@@ -1307,12 +1307,15 @@ def main():
 
                 matrix_cat_col = 'Sub Category' if 'Sub Category' in df.columns else 'Task / Issue Type'
                 df[matrix_cat_col] = df[matrix_cat_col].fillna('Other / Uncategorized')
+                df_dedup_p = df.drop_duplicates(subset=['Ticket Number'], keep='first') if 'Ticket Number' in df.columns else df
                 matrix_pivot = pd.crosstab(
-                    df[matrix_cat_col],
-                    df['Employee Name'],
+                    df_dedup_p[matrix_cat_col],
+                    df_dedup_p['Employee Name'],
                     margins=True,
                     margins_name="Grand Total"
                 )
+                cols_p = [c for c in matrix_pivot.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in matrix_pivot.columns else [])
+                matrix_pivot = matrix_pivot[cols_p]
                 if "Grand Total" in matrix_pivot.index:
                     d_rows_p = matrix_pivot.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
                     t_row_p = matrix_pivot.loc[["Grand Total"]]

@@ -231,11 +231,13 @@ with st.sidebar:
     run_btn = st.button("🚀 Run Audit Scraper", type="primary", use_container_width=True)
 
 # Helper function to generate Master Executive Excel Report from multiple DataFrames
-def build_executive_team_excel(master_df, team_summary_df, cat_summary_df):
+def build_executive_team_excel(master_df, team_summary_df, cat_summary_df, matrix_summary_df=None):
     output_buf = io.BytesIO()
     with pd.ExcelWriter(output_buf, engine='openpyxl') as writer:
         team_summary_df.to_excel(writer, sheet_name="Team Executive Summary", index=False)
         cat_summary_df.to_excel(writer, sheet_name="Category Summary", index=False)
+        if matrix_summary_df is not None:
+            matrix_summary_df.to_excel(writer, sheet_name="Technician Matrix Pivot")
         master_df.to_excel(writer, sheet_name="Master Audit Details", index=False)
         
     output_buf.seek(0)
@@ -262,9 +264,12 @@ def build_executive_team_excel(master_df, team_summary_df, cat_summary_df):
                 cell = ws.cell(row=row, column=col)
                 cell.font = cell_font
                 cell.border = thin_border
-                if sheetname == "Team Executive Summary" and row == ws.max_row:
+                if (sheetname == "Team Executive Summary" or sheetname == "Technician Matrix Pivot") and row == ws.max_row:
                     cell.font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
                     cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+                elif sheetname == "Technician Matrix Pivot" and col == ws.max_column:
+                    cell.font = Font(name="Segoe UI", size=10, bold=True, color="1F4E78")
+                    cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
                     
         for col in ws.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
@@ -532,8 +537,21 @@ with main_mode_tab1:
                 work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
                 work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(df_details) * 100).round(1).astype(str) + '%'
                 
+                matrix_cat_col = 'Sub Category' if 'Sub Category' in df_details.columns else 'Task / Issue Type'
+                df_details[matrix_cat_col] = df_details[matrix_cat_col].fillna('Other / Uncategorized')
+                matrix_pivot_excel = pd.crosstab(
+                    df_details[matrix_cat_col],
+                    df_details['Employee Name'],
+                    margins=True,
+                    margins_name="Grand Total"
+                )
+                if "Grand Total" in matrix_pivot_excel.index:
+                    d_rows = matrix_pivot_excel.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
+                    t_row = matrix_pivot_excel.loc[["Grand Total"]]
+                    matrix_pivot_excel = pd.concat([d_rows, t_row])
+                
                 export_master = df_details.drop(columns=["Is_Solved_Val"], errors="ignore")
-                exec_bytes = build_executive_team_excel(export_master, team_summary_df, work_summary_df)
+                exec_bytes = build_executive_team_excel(export_master, team_summary_df, work_summary_df, matrix_pivot_excel)
 
                 st.download_button(
                     label=f"⬇️ Download Combined Executive Team Report ({exec_file_name})",
@@ -541,7 +559,7 @@ with main_mode_tab1:
                     file_name=exec_file_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-                st.caption("✨ Exact 3-sheet Executive Team Report with no manual file merging needed!")
+                st.caption("✨ Combined Executive Team Report including Technician Pivot Matrix, Category Summary & Master Audit Details!")
             else:
                 with open(output_file, "rb") as f:
                     bytes_data = f.read()
@@ -554,7 +572,75 @@ with main_mode_tab1:
 
             st.markdown("<br>", unsafe_allow_html=True)
             
-            tab1, tab2, tab3 = st.tabs(["📝 Scraped Audit Details", "🏷️ Task & Category Breakdown", "📊 Raw Summary Sheet"])
+            tab0, tab1, tab2, tab3 = st.tabs([
+                "👥 Technician Solved Matrix (Pivot)",
+                "📝 Scraped Audit Details",
+                "🏷️ Task & Category Breakdown",
+                "📊 Raw Summary Sheet"
+            ])
+            
+            with tab0:
+                st.subheader("👥 Technician Solved Tickets Breakdown (Pivot Table)")
+                st.caption("Exact category and sub-category ticket count solved per technician matching Excel Pivot Table layout.")
+                
+                col_p1, col_p2 = st.columns([3, 2])
+                with col_p1:
+                    status_opts = sorted(df_details["Status"].dropna().unique().tolist()) if "Status" in df_details.columns else []
+                    default_statuses = [s for s in status_opts if s.lower() in ["completed", "closed"]]
+                    if not default_statuses:
+                        default_statuses = status_opts
+                    chosen_statuses = st.multiselect(
+                        "Status Filter (Multiple Items)",
+                        options=status_opts,
+                        default=default_statuses,
+                        help="Filter tickets by status (Completed, Closed, On Hold, etc.)"
+                    )
+                with col_p2:
+                    breakdown_col_choice = st.selectbox(
+                        "Row Category Level",
+                        options=["Sub Category", "Task / Issue Type", "Category"],
+                        index=0
+                    )
+                
+                # Filter dataset for matrix
+                if chosen_statuses and "Status" in df_details.columns:
+                    matrix_filtered = df_details[df_details["Status"].isin(chosen_statuses)].copy()
+                else:
+                    matrix_filtered = df_details.copy()
+                    
+                actual_breakdown_col = breakdown_col_choice if breakdown_col_choice in matrix_filtered.columns else "Task / Issue Type"
+                actual_emp_col = "Employee Name" if "Employee Name" in matrix_filtered.columns else ("Target Employee" if "Target Employee" in matrix_filtered.columns else "Grid Employee Name")
+                
+                matrix_filtered[actual_breakdown_col] = matrix_filtered[actual_breakdown_col].fillna("Other / Uncategorized")
+                
+                if not matrix_filtered.empty and actual_emp_col in matrix_filtered.columns:
+                    pivot_table = pd.crosstab(
+                        matrix_filtered[actual_breakdown_col],
+                        matrix_filtered[actual_emp_col],
+                        margins=True,
+                        margins_name="Grand Total"
+                    )
+                    
+                    # Sort rows by Grand Total descending (keep Grand Total at bottom)
+                    if "Grand Total" in pivot_table.index:
+                        data_rows = pivot_table.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
+                        total_row = pivot_table.loc[["Grand Total"]]
+                        sorted_pivot = pd.concat([data_rows, total_row])
+                    else:
+                        sorted_pivot = pivot_table
+                        
+                    st.markdown(f"**Showing `{len(matrix_filtered)}` tickets across `{len(sorted_pivot.index) - 1}` categories:**")
+                    st.dataframe(sorted_pivot, use_container_width=True)
+                    
+                    pivot_csv = sorted_pivot.to_csv().encode('utf-8')
+                    st.download_button(
+                        label="⬇️ Download Pivot Matrix Table (CSV)",
+                        data=pivot_csv,
+                        file_name=f"technician_pivot_matrix_{datetime.now().strftime('%d_%b_%Y')}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("No records found for the selected filter.")
             
             with tab1:
                 st.subheader("Filterable Audit Details Table")

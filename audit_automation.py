@@ -1305,9 +1305,23 @@ def main():
                 if 'Employee Name' not in export_master.columns:
                     export_master['Employee Name'] = df['Employee Name']
 
+                matrix_cat_col = 'Sub Category' if 'Sub Category' in df.columns else 'Task / Issue Type'
+                df[matrix_cat_col] = df[matrix_cat_col].fillna('Other / Uncategorized')
+                matrix_pivot = pd.crosstab(
+                    df[matrix_cat_col],
+                    df['Employee Name'],
+                    margins=True,
+                    margins_name="Grand Total"
+                )
+                if "Grand Total" in matrix_pivot.index:
+                    d_rows_p = matrix_pivot.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
+                    t_row_p = matrix_pivot.loc[["Grand Total"]]
+                    matrix_pivot = pd.concat([d_rows_p, t_row_p])
+
                 with pd.ExcelWriter(exec_output_file, engine='openpyxl') as exec_writer:
                     team_summary_df.to_excel(exec_writer, sheet_name="Team Executive Summary", index=False)
                     work_summary_df.to_excel(exec_writer, sheet_name="Category Summary", index=False)
+                    matrix_pivot.to_excel(exec_writer, sheet_name="Technician Matrix Pivot")
                     export_master.to_excel(exec_writer, sheet_name="Master Audit Details", index=False)
 
                 wb_exec = openpyxl.load_workbook(exec_output_file)
@@ -1323,9 +1337,12 @@ def main():
                             cell = ws.cell(row=row, column=col)
                             cell.font = cell_font
                             cell.border = thin_border
-                            if sheetname == "Team Executive Summary" and row == ws.max_row:
+                            if (sheetname == "Team Executive Summary" or sheetname == "Technician Matrix Pivot") and row == ws.max_row:
                                 cell.font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
                                 cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+                            elif sheetname == "Technician Matrix Pivot" and col == ws.max_column:
+                                cell.font = Font(name="Segoe UI", size=10, bold=True, color="1F4E78")
+                                cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
                     for col in ws.columns:
                         max_len = max(len(str(cell.value or '')) for cell in col)
                         col_letter = openpyxl.utils.get_column_letter(col[0].column)

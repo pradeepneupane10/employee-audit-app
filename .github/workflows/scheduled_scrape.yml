@@ -11,6 +11,9 @@ concurrency:
   group: audit-scraper
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
@@ -42,8 +45,8 @@ jobs:
           HEADLESS: "true"
           PYTHONUNBUFFERED: "1"
         run: |
-          # Compute current date in Nepal Time (UTC+5:45)
-          CURRENT_DATE=$(date -d '+5 hours 45 minutes' '+%d %b %Y')
+          # Compute current date in Nepal Time (Asia/Kathmandu, UTC+5:45)
+          CURRENT_DATE=$(TZ="Asia/Kathmandu" date '+%d %b %Y')
           echo "Running Team Audit Scrape for: $CURRENT_DATE"
           python audit_automation.py \
             --employee "Ajit Shrestha, Shashikant Chaudhary, Om Neupane, Sabin Giri, Sunil Chaudhary, Sanjeev Giri, Chandramani Tharu, Rajesh Maharjan" \
@@ -60,5 +63,6 @@ jobs:
             echo "No new changes to commit."
           else
             git commit -m "Auto-refresh: Update latest team audit reports [skip ci]"
+            git pull --rebase origin main || true
             git push origin main
           fi

@@ -1,0 +1,64 @@
+name: Scheduled Team Audit Scraper
+run-name: ⏱️ Scheduled Team Audit Scraper (Auto-Refresh)
+
+on:
+  schedule:
+    # Runs every 15 minutes between 09:00 and 20:00 NPT (UTC 03:15 to 14:15)
+    - cron: '*/15 3-14 * * *'
+  workflow_dispatch: # Allows manual one-click trigger from GitHub Actions
+
+concurrency:
+  group: audit-scraper
+  cancel-in-progress: true
+
+jobs:
+  scrape-and-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🐍 Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🌐 Install Playwright System Dependencies & Chromium
+        run: |
+          playwright install --with-deps chromium
+
+      - name: 🚀 Run Team Audit Scraper
+        env:
+          HEADLESS: "true"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          # Compute current date in Nepal Time (UTC+5:45)
+          CURRENT_DATE=$(date -d '+5 hours 45 minutes' '+%d %b %Y')
+          echo "Running Team Audit Scrape for: $CURRENT_DATE"
+          python audit_automation.py \
+            --employee "Ajit Shrestha, Shashikant Chaudhary, Om Neupane, Sabin Giri, Sunil Chaudhary, Sanjeev Giri, Chandramani Tharu, Rajesh Maharjan" \
+            --from-date "$CURRENT_DATE" \
+            --to-date "$CURRENT_DATE" \
+            --non-interactive
+
+      - name: 💾 Commit & Push Latest Audit Reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f audit_report_*.xlsx EXECUTIVE_TEAM_AUDIT_REPORT_*.xlsx || true
+          if git diff --staged --quiet; then
+            echo "No new changes to commit."
+          else
+            git commit -m "Auto-refresh: Update latest team audit reports [skip ci]"
+            git push origin main
+          fi

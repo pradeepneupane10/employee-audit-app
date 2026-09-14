@@ -392,22 +392,28 @@ with main_mode_tab1:
 
     # Display Dashboard if output file exists
     output_file = st.session_state.get("last_output_file", None)
-    
-    # If not yet set in session, automatically discover the latest available audit report on disk
-    if not output_file or not os.path.exists(output_file):
-        import glob
-        existing_reports = glob.glob("audit_report_*.xlsx")
-        if existing_reports:
-            # Sort by file modification time (most recent first)
-            existing_reports.sort(key=os.path.getmtime, reverse=True)
-            output_file = existing_reports[0]
+    # Automatically discover the latest available audit report on disk
+    import glob
+    existing_reports = glob.glob("audit_report_*.xlsx")
+    if existing_reports:
+        # Sort by file modification time (most recent first)
+        existing_reports.sort(key=os.path.getmtime, reverse=True)
+        latest_on_disk = existing_reports[0]
+        if not output_file or not os.path.exists(output_file) or os.path.getmtime(latest_on_disk) > os.path.getmtime(output_file):
+            output_file = latest_on_disk
             st.session_state["last_output_file"] = output_file
             mod_time = datetime.fromtimestamp(os.path.getmtime(output_file)).strftime("%Y-%m-%d %H:%M:%S")
             st.session_state["last_run_time"] = mod_time
 
     if output_file and os.path.exists(output_file):
-        st.markdown("### 📊 Performance Analytics Dashboard")
-        st.caption(f"⚡ **Instant Pre-Loaded View** | Last updated: {st.session_state.get('last_run_time', 'Recently')} | Report File: `{os.path.basename(output_file)}`")
+        dash_header_col, dash_refresh_col = st.columns([4, 1])
+        with dash_header_col:
+            st.markdown("### 📊 Performance Analytics Dashboard")
+            st.caption(f"⚡ **Live View** | Last updated: {st.session_state.get('last_run_time', 'Recently')} | Report File: `{os.path.basename(output_file)}`")
+        with dash_refresh_col:
+            if st.button("🔄 Refresh Data", use_container_width=True):
+                st.session_state.pop("last_output_file", None)
+                st.rerun()
         
         try:
             xls = pd.ExcelFile(output_file)

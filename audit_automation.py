@@ -632,13 +632,13 @@ click_page_js = r"""
 """
 
 
-def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
+def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs, shared_modal_cache=None):
     """
     Worker function executed in parallel threads or sequentially.
     Each worker has its own dedicated Playwright browser instance and session.
     """
     emp_records = []
-    modal_cache = {}  # Cache modal details by ticket number so duplicate updates don't reload the modal iframe
+    modal_cache = shared_modal_cache if shared_modal_cache is not None else {}
     with sync_playwright() as p:
         log(f"[{target_emp}] 🚀 Launching dedicated browser context...")
         browser = p.chromium.launch(**launch_kwargs)
@@ -675,9 +675,9 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
             step = safe_eval(page, automate_selects_js, ["Employee", "Case", "Update", target_emp])
             if step == "done":
                 break
-            wait_for_postback(page)
-            page.wait_for_timeout(400)
-            safe_wait_for_networkidle(page, 4000)
+            wait_for_postback(page, timeout_ms=3000)
+            page.wait_for_timeout(150)
+            safe_wait_for_networkidle(page, 2000)
 
         active_selected_text = safe_eval(page, """() => {
             const s = document.getElementById('ContentPlaceHolder1_combouserddl');
@@ -697,20 +697,20 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
         # Set Dates
         log(f"[{target_emp}] Setting date inputs (From: {from_date}, To: {to_date})...")
         dates_set = safe_eval(page, set_date_inputs_js, [from_date, to_date])
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(100)
 
         # Click search
         log(f"[{target_emp}] Submitting query...")
         searched = safe_eval(page, click_search_js)
         if searched:
-            wait_for_postback(page)
-            page.wait_for_timeout(1000)
-            safe_wait_for_networkidle(page, 6000)
+            wait_for_postback(page, timeout_ms=5000)
+            page.wait_for_timeout(400)
+            safe_wait_for_networkidle(page, 4000)
         else:
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(800)
 
         try:
-            page.locator('table').first.wait_for(state="visible", timeout=6000)
+            page.locator('table').first.wait_for(state="visible", timeout=4000)
         except Exception:
             pass
 
@@ -740,79 +740,88 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                 modal_data = {}
                 row_remark = str(row_info.get("remark", ""))
                 
-                # Click row link to open modal
-                clicked = safe_eval(page, click_row_link_js, i)
-                if not clicked:
-                    continue
+                # Check for cached ticket details from remark regex (e.g. Case: 12345 or Ticket: 12345 or 6-10 digit ticket number)
+                remark_match = re.search(r'(?:case|ticket|no|#)?\s*[:\-#]?\s*(\d{5,10})', row_remark, re.I)
+                potential_ticket_key = remark_match.group(1) if remark_match else None
                 
-                wait_for_postback(page)
-                page.wait_for_timeout(80)
-                
-                # Fast check for modal frame
-                modal_frame = None
-                for _ in range(25):
-                    direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
-                    candidate_frames = [direct_f] if direct_f else page.frames
-                    for frame in candidate_frames:
-                        if not frame:
-                            continue
+                if potential_ticket_key and potential_ticket_key in modal_cache:
+                    modal_data = modal_cache[potential_ticket_key].copy()
+                    log(f"[{target_emp}] ⚡ Instant Cache Hit for Ticket #{potential_ticket_key} (Bypassing modal iframe)")
+                else:
+                    # Click row link to open modal
+                    clicked = safe_eval(page, click_row_link_js, i)
+                    if not clicked:
+                        continue
+                    
+                    wait_for_postback(page, timeout_ms=3000)
+                    
+                    # Fast check for modal frame
+                    modal_frame = None
+                    for _ in range(20):
+                        direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
+                        candidate_frames = [direct_f] if direct_f else page.frames
+                        for frame in candidate_frames:
+                            if not frame:
+                                continue
+                            try:
+                                has_header = frame.evaluate(r"""
+                                () => {
+                                    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
+                                        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
+                                    );
+                                    return headers.length > 0;
+                                }
+                                """)
+                                if has_header:
+                                    modal_frame = frame
+                                    break
+                            except Exception:
+                                pass
+                        if modal_frame:
+                            break
+                        page.wait_for_timeout(25)
+
+                    if not modal_frame:
                         try:
-                            has_header = frame.evaluate(r"""
-                            () => {
-                                const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-                                    el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-                                );
-                                return headers.length > 0;
-                            }
-                            """)
-                            if has_header:
-                                modal_frame = frame
-                                break
+                            frame = page.frame(name="ContentPlaceHolder1_ifrm")
+                            if frame:
+                                frame.evaluate(close_modal_js)
                         except Exception:
                             pass
-                    if modal_frame:
-                        break
-                    page.wait_for_timeout(30)
-
-                if not modal_frame:
+                        continue
+                    
                     try:
-                        frame = page.frame(name="ContentPlaceHolder1_ifrm")
-                        if frame:
-                            frame.evaluate(close_modal_js)
+                        modal_data = modal_frame.evaluate(extract_modal_data_js)
                     except Exception:
                         pass
-                    continue
-                
-                try:
-                    modal_frame.evaluate(scroll_modal_js)
-                except Exception:
-                    pass
-                page.wait_for_timeout(40)
-                
-                try:
-                    modal_data = modal_frame.evaluate(extract_modal_data_js)
-                except Exception:
-                    pass
-                
-                closed = False
-                try:
-                    closed = modal_frame.evaluate(close_modal_js)
-                except Exception:
-                    pass
-                if not closed:
+                    
+                    # Cache this ticket's modal data for any subsequent updates across this session
+                    scraped_tkt = str(modal_data.get("Ticket Number", "")).strip()
+                    if scraped_tkt:
+                        modal_cache[scraped_tkt] = modal_data
+                    if potential_ticket_key:
+                        modal_cache[potential_ticket_key] = modal_data
+                    
+                    # Close modal swiftly
+                    closed = False
                     try:
-                        modal_frame.locator('text=Close').first.click(timeout=1000)
+                        closed = modal_frame.evaluate(close_modal_js)
                     except Exception:
                         pass
-                
-                wait_for_postback(page)
-                for _ in range(20):
-                    try:
-                        if not page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible():
+                    if not closed:
+                        try:
+                            modal_frame.locator('text=Close').first.click(timeout=600)
+                        except Exception:
+                            pass
+                    
+                    wait_for_postback(page, timeout_ms=2000)
+                    for _ in range(15):
+                        try:
+                            if not page.locator('iframe[name="ContentPlaceHolder1_ifrm"]').is_visible():
+                                break
+                        except Exception:
                             break
-                    except Exception:
-                        break
-                    page.wait_for_timeout(40)
+                        page.wait_for_timeout(25)
 
                 combined_record = {
                     "Target Employee": target_emp,
@@ -949,12 +958,13 @@ def main():
         log(f"Starting audit scrape for: {emp_list[0]}")
         scraped_records = scrape_single_employee(emp_list[0], from_date, to_date, launch_kwargs)
     else:
-        max_workers = min(6, len(emp_list))
-        log(f"⚡ Launching {max_workers} PARALLEL WORKERS to scrape {len(emp_list)} employees simultaneously in separate browser sessions...")
+        max_workers = min(8, len(emp_list))
+        log(f"⚡ Launching {max_workers} HIGH-SPEED PARALLEL WORKERS to scrape {len(emp_list)} employees simultaneously...")
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        shared_modal_cache = {}
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_emp = {
-                executor.submit(scrape_single_employee, emp, from_date, to_date, launch_kwargs): emp
+                executor.submit(scrape_single_employee, emp, from_date, to_date, launch_kwargs, shared_modal_cache): emp
                 for emp in emp_list
             }
             for future in as_completed(future_to_emp):

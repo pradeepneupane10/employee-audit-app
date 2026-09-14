@@ -467,19 +467,9 @@ with main_mode_tab1:
                 today_filename_str = datetime.now().strftime("%d_%b_%Y")
                 exec_file_name = f"EXECUTIVE_TEAM_AUDIT_REPORT_{today_filename_str}.xlsx"
                 
-                import glob
-                matching_exec = glob.glob(f"*EXECUTIVE_TEAM_AUDIT_REPORT_*.xlsx")
-                exec_bytes = None
-                if matching_exec and os.path.exists(matching_exec[0]):
-                    try:
-                        with open(matching_exec[0], "rb") as ef:
-                            exec_bytes = ef.read()
-                    except Exception:
-                        pass
-                
-                if exec_bytes is None:
-                    if "Employee Name" not in df_details.columns and emp_name_col in df_details.columns:
-                        df_details["Employee Name"] = df_details[emp_name_col]
+                # Always build dynamically from the current active df_details to guarantee 100% match with the screen
+                if "Employee Name" not in df_details.columns and emp_name_col in df_details.columns:
+                    df_details["Employee Name"] = df_details[emp_name_col]
                         
                     def is_solved_row(row):
                         st_val = str(row.get("Status", "")).strip().lower()

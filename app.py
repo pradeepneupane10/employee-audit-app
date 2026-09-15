@@ -24,102 +24,103 @@ try:
 except Exception:
     pass
 
-# Set Streamlit Page Configuration for Mobile & Desktop
+# Set Streamlit Page Configuration
 st.set_page_config(
-    page_title="CGNET Employee Audit Portal",
-    page_icon="📊",
+    page_title="Logical Data",
+    page_icon=":material/table_chart:",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for Professional Google Sheets Office Aesthetic
+# Custom CSS for Pure Google Sheets Office Aesthetic
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Google+Sans:wght@400;500;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
     
-    html, body, [class*="css"] {
-        font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-        color: #202124;
-    }
-    
-    .stApp {
-        background-color: #F8F9FA !important;
+    html, body, [class*="css"], .stApp {
+        font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif !important;
+        background-color: #FFFFFF !important;
         color: #202124 !important;
     }
     
-    /* Google Sheets Document Top Header */
+    /* Enforce Dark Readable Text for all elements */
+    p, span, label, h1, h2, h3, h4, h5, h6, div, li, small {
+        color: #202124 !important;
+    }
+    
+    /* Google Sheets Top Header */
     .sheets-header {
         background-color: #FFFFFF;
         border: 1px solid #DADCE0;
-        padding: 12px 20px;
-        margin-bottom: 1.5rem;
+        padding: 10px 18px;
+        margin-bottom: 1.25rem;
         display: flex;
         align-items: center;
         gap: 14px;
-        border-radius: 6px;
+        border-radius: 4px;
         box-shadow: 0 1px 2px rgba(60,64,67,0.06);
     }
     .sheets-icon {
-        width: 38px;
-        height: 38px;
+        width: 36px;
+        height: 36px;
         background-color: #0F9D58;
-        border-radius: 4px;
+        border-radius: 3px;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: white;
+        color: #FFFFFF !important;
         font-weight: 700;
-        font-size: 20px;
+        font-size: 18px;
     }
     .sheets-title-box h1 {
         color: #202124 !important;
         font-size: 1.35rem !important;
         font-weight: 600 !important;
         margin: 0 !important;
-        line-height: 1.3 !important;
+        line-height: 1.2 !important;
     }
     .sheets-title-box p {
         color: #5F6368 !important;
-        font-size: 0.82rem !important;
+        font-size: 0.8rem !important;
         margin: 2px 0 0 0 !important;
     }
     
-    /* Google Sheets KPI Cells */
+    /* Spreadsheet KPI Summary Cells */
     .kpi-card {
         background-color: #FFFFFF;
         border: 1px solid #DADCE0;
-        border-radius: 6px;
-        padding: 1rem 0.8rem;
+        border-radius: 4px;
+        padding: 12px 10px;
         text-align: center;
         box-shadow: 0 1px 2px rgba(60, 64, 67, 0.04);
     }
     .kpi-title {
-        color: #5F6368;
-        font-size: 0.78rem;
-        font-weight: 600;
+        color: #5F6368 !important;
+        font-size: 0.75rem !important;
+        font-weight: 600 !important;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        margin-bottom: 4px;
+        margin-bottom: 2px;
     }
     .kpi-value {
-        color: #137333;
-        font-size: 1.65rem;
-        font-weight: 700;
+        color: #137333 !important;
+        font-size: 1.55rem !important;
+        font-weight: 700 !important;
     }
     .kpi-subtext {
-        color: #70757A;
-        font-size: 0.75rem;
-        margin-top: 2px;
+        color: #70757A !important;
+        font-size: 0.72rem !important;
+        margin-top: 1px;
     }
     
-    /* Clean Corporate Buttons */
+    /* Clean Office Buttons */
     .stDownloadButton > button {
         background-color: #137333 !important;
         color: #FFFFFF !important;
         font-weight: 600 !important;
         border: 1px solid #0F9D58 !important;
         border-radius: 4px !important;
-        padding: 0.6rem 1.5rem !important;
+        padding: 0.55rem 1.4rem !important;
         box-shadow: 0 1px 2px rgba(60,64,67,0.1) !important;
         width: 100%;
         transition: background-color 0.2s ease;
@@ -141,18 +142,53 @@ st.markdown("""
         background-color: #1557B0 !important;
     }
 
-    /* Google Sheets Sidebar */
+    /* Google Sheets Sidebar - Light & Crisp */
     section[data-testid="stSidebar"] {
-        background-color: #FFFFFF !important;
+        background-color: #F8F9FA !important;
         border-right: 1px solid #DADCE0 !important;
+    }
+    section[data-testid="stSidebar"] * {
+        color: #202124 !important;
+    }
+    section[data-testid="stSidebar"] h1,
+    section[data-testid="stSidebar"] h2,
+    section[data-testid="stSidebar"] h3 {
+        color: #202124 !important;
+        font-size: 1.05rem !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Dropdown and Select inputs */
+    div[data-baseweb="select"] > div {
+        background-color: #FFFFFF !important;
+        border: 1px solid #DADCE0 !important;
+        border-radius: 4px !important;
+    }
+    div[data-baseweb="select"] * {
+        color: #202124 !important;
+    }
+    
+    /* Radio options */
+    div[role="radiogroup"] label {
+        color: #202124 !important;
+    }
+    div[role="radiogroup"] label span {
+        color: #202124 !important;
+    }
+    
+    /* Table styling like Google Sheets */
+    div[data-testid="stDataFrame"] {
+        border: 1px solid #DADCE0;
+        border-radius: 4px;
+        background-color: #FFFFFF;
     }
     
     /* Status Box */
     .status-box {
-        background: #F1F3F4;
-        border-left: 4px solid #1A73E8;
+        background: #F8F9FA;
+        border-left: 3px solid #1A73E8;
         color: #202124;
-        padding: 1rem;
+        padding: 0.8rem;
         border-radius: 4px;
         font-family: monospace;
         max-height: 200px;
@@ -181,10 +217,12 @@ setup_playwright()
 # Title Banner - Google Sheets Style
 st.markdown("""
 <div class="sheets-header">
-    <div class="sheets-icon">📊</div>
+    <div class="sheets-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+    </div>
     <div class="sheets-title-box">
-        <h1>CGNET Employee Performance & Audit Sheet</h1>
-        <p>Official Performance Audit, Resolution Tracking & Executive Reporting</p>
+        <h1>Logical Data</h1>
+        <p>Operational Performance Audit & Resolution Tracking</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -196,11 +234,11 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # Sidebar Inputs
 with st.sidebar:
-    st.header("📋 Audit Configuration")
+    st.subheader("Audit Configuration")
     
     # Employee Selection
     emp_options = [
-        "👥 ALL TEAM (Ajit, Shashikant, Om, Sabin, Sunil, Sanjeev, Chandramani, Rajesh)",
+        "ALL TEAM (Ajit, Shashikant, Om, Sabin, Sunil, Sanjeev, Chandramani, Rajesh)",
         "Ajit Shrestha",
         "Shashikant Chaudhary",
         "Om Neupane",
@@ -215,13 +253,13 @@ with st.sidebar:
     
     if selected_emp_type == "Custom Employee Name / List...":
         employee_name = st.text_input("Enter Employee Name(s) (comma separated for multiple)", value="Om Neupane")
-    elif selected_emp_type.startswith("👥 ALL TEAM"):
+    elif selected_emp_type.startswith("ALL TEAM"):
         employee_name = "Ajit Shrestha, Shashikant Chaudhary, Om Neupane, Sabin Giri, Sunil Chaudhary, Sanjeev Giri, Chandramani Tharu, Rajesh Maharjan"
     else:
         employee_name = selected_emp_type
         
     st.markdown("---")
-    st.subheader("📅 Date Range Selector")
+    st.subheader("Date Range Selector")
     
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
@@ -263,12 +301,12 @@ with st.sidebar:
     to_date_str = to_date_obj.strftime("%d %b %Y")      # e.g., "31 Aug 2026"
 
     if from_date_str == to_date_str:
-        st.success(f"🎯 **Target Date:** `{from_date_str}` (Today's updates only)")
+        st.info(f"Target Date: **{from_date_str}** (Today's updates only)")
     else:
-        st.info(f"📅 **Target Period:** `{from_date_str}` to `{to_date_str}`")
+        st.info(f"Target Period: **{from_date_str}** to **{to_date_str}**")
     st.markdown("---")
     
-    run_btn = st.button("🚀 Run Audit Scraper", type="primary", use_container_width=True)
+    run_btn = st.button("Run Audit Scraper", type="primary", use_container_width=True)
 
 # Helper function to generate Master Executive Excel Report from multiple DataFrames
 def build_executive_team_excel(master_df, team_summary_df, cat_summary_df, matrix_summary_df=None):
@@ -345,11 +383,11 @@ def classify_work_type(row):
         return 'General / Other Issues'
 
 # Mode Selection Tabs in Main Area
-main_mode_tab1, main_mode_tab2 = st.tabs(["📊 Performance Analytics & Scraper", "📁 Combine Uploaded Reports (Manager Tool)"])
+main_mode_tab1, main_mode_tab2 = st.tabs(["Performance Analytics & Scraper", "Combine Uploaded Reports (Manager Tool)"])
 
 with main_mode_tab1:
     if run_btn:
-        st.info(f"⏳ Starting automated scraper for **{employee_name}** from `{from_date_str}` to `{to_date_str}`...")
+        st.info(f"Starting automated scraper for **{employee_name}** from `{from_date_str}` to `{to_date_str}`...")
         
         log_container = st.empty()
         logs_list = []
@@ -409,10 +447,10 @@ with main_mode_tab1:
             return_code = process.poll()
             
             if return_code != 0:
-                st.error(f"❌ Scraper process finished with exit code {return_code}. Review the logs above.")
+                st.error(f"Scraper process finished with exit code {return_code}. Review the logs above.")
             else:
                 progress_bar.progress(1.0, text="Scraping completed!")
-                st.success("✅ Audit Scraper completed successfully!")
+                st.success("Audit Scraper completed successfully.")
                 
                 if ',' in employee_name or 'ALL TEAM' in employee_name.upper():
                     safe_emp = "ALL_TEAM"
@@ -432,7 +470,7 @@ with main_mode_tab1:
                         st.session_state["last_run_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
         except Exception as e:
-            st.error(f"❌ Scraper error encountered: {e}")
+            st.error(f"Scraper error encountered: {e}")
             st.exception(e)
 
     # Display Dashboard if output file exists
@@ -459,10 +497,10 @@ with main_mode_tab1:
     if output_file and os.path.exists(output_file):
         dash_header_col, dash_refresh_col = st.columns([4, 1])
         with dash_header_col:
-            st.markdown("### 📊 Performance Analytics Dashboard")
-            st.caption(f"⚡ **Live View** | Last updated: {st.session_state.get('last_run_time', 'Recently')} | Report File: `{os.path.basename(output_file)}`")
+            st.markdown("### Performance Analytics Dashboard")
+            st.caption(f"**Live View** | Last updated: {st.session_state.get('last_run_time', 'Recently')} | Report File: `{os.path.basename(output_file)}`")
         with dash_refresh_col:
-            if st.button("🔄 Refresh Data", use_container_width=True):
+            if st.button("Refresh Data", use_container_width=True):
                 st.session_state.clear()
                 st.rerun()
         
@@ -527,7 +565,7 @@ with main_mode_tab1:
                 """, unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("### 📥 Download Executive Report")
+            st.markdown("### Download Executive Report")
 
             emp_name_col = "Grid Employee Name" if "Grid Employee Name" in df_details.columns else "Employee Name"
             has_multiple_emps = (emp_name_col in df_details.columns and df_details[emp_name_col].dropna().nunique() > 1) or ("ALL_TEAM" in output_file) or ("," in str(employee_name))
@@ -578,7 +616,7 @@ with main_mode_tab1:
                 tot_solved_team = df_details["Is_Solved_Val"].sum()
                 team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
                 total_team_row = pd.DataFrame([{
-                    "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
+                    "Employee Name": "GRAND TOTAL (ALL TEAM)",
                     "Total Scraped Tickets": tot_tickets_team,
                     "Solved / Handled Count": tot_solved_team,
                     "Solution Rate %": team_rate_val
@@ -612,17 +650,17 @@ with main_mode_tab1:
                 exec_bytes = build_executive_team_excel(export_master, team_summary_df, work_summary_df, matrix_pivot_excel)
 
                 st.download_button(
-                    label=f"⬇️ Download Combined Executive Team Report ({exec_file_name})",
+                    label=f"Download Combined Executive Team Report ({exec_file_name})",
                     data=exec_bytes,
                     file_name=exec_file_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-                st.caption("✨ Combined Executive Team Report including Technician Pivot Matrix, Category Summary & Master Audit Details!")
+                st.caption("Combined Executive Team Report including Technician Pivot Matrix, Category Summary & Master Audit Details")
             else:
                 with open(output_file, "rb") as f:
                     bytes_data = f.read()
                 st.download_button(
-                    label=f"⬇️ Download Excel Audit Report ({os.path.basename(output_file)})",
+                    label=f"Download Excel Audit Report ({os.path.basename(output_file)})",
                     data=bytes_data,
                     file_name=os.path.basename(output_file),
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -631,15 +669,15 @@ with main_mode_tab1:
             st.markdown("<br>", unsafe_allow_html=True)
             
             tab0, tab_team, tab_cat, tab1, tab3 = st.tabs([
-                "👥 Technician Category Matrix (Pivot)",
-                "🏆 Team Executive Summary (Technicians)",
-                "🏷️ Category Summary",
-                "📝 Scraped Audit Details",
-                "📊 Raw Summary Sheet"
+                "Technician Category Matrix (Pivot)",
+                "Team Executive Summary (Technicians)",
+                "Category Summary",
+                "Scraped Audit Details",
+                "Raw Summary Sheet"
             ])
             
             with tab0:
-                st.subheader("👥 Technician Category Breakdown Matrix (Pivot Table)")
+                st.subheader("Technician Category Breakdown Matrix (Pivot Table)")
                 st.caption("Exact category and sub-category ticket count per technician matching Excel Pivot Table layout.")
                 
                 col_p1, col_p2, col_p3 = st.columns([3, 2, 2])
@@ -715,7 +753,7 @@ with main_mode_tab1:
                     
                     pivot_csv = sorted_pivot.to_csv().encode('utf-8')
                     st.download_button(
-                        label="⬇️ Download Pivot Matrix Table (CSV)",
+                        label="Download Pivot Matrix Table (CSV)",
                         data=pivot_csv,
                         file_name=f"technician_pivot_matrix_{datetime.now().strftime('%d_%b_%Y')}.csv",
                         mime="text/csv"
@@ -724,33 +762,33 @@ with main_mode_tab1:
                     st.warning("No records found for the selected filter.")
             
             with tab_team:
-                st.subheader("🏆 Team Executive Summary (Technician Performance)")
+                st.subheader("Team Executive Summary (Technician Performance)")
                 st.caption("Overall ticket volume, solved counts, and solution percentage per technician (matching Excel Sheet 1).")
                 st.dataframe(team_summary_df, use_container_width=True)
                 
                 team_csv = team_summary_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="⬇️ Download Team Executive Summary (CSV)",
+                    label="Download Team Executive Summary (CSV)",
                     data=team_csv,
                     file_name=f"team_executive_summary_{datetime.now().strftime('%d_%b_%Y')}.csv",
                     mime="text/csv"
                 )
                 
             with tab_cat:
-                st.subheader("🏷️ Category & Issue Type Summary")
+                st.subheader("Category & Issue Type Summary")
                 st.caption("Distribution of tickets and solution rate by category (matching Excel Sheet 2).")
                 st.dataframe(work_summary_df, use_container_width=True)
                 
                 cat_csv = work_summary_df.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="⬇️ Download Category Summary (CSV)",
+                    label="Download Category Summary (CSV)",
                     data=cat_csv,
                     file_name=f"category_summary_{datetime.now().strftime('%d_%b_%Y')}.csv",
                     mime="text/csv"
                 )
                 
                 st.markdown("---")
-                st.subheader("📊 Category Volume Chart")
+                st.subheader("Category Volume Chart")
                 st.bar_chart(work_summary_df.set_index('Task / Issue Type')['Total_Tickets'])
                 
                 st.markdown("---")
@@ -763,8 +801,8 @@ with main_mode_tab1:
                     st.dataframe(cat_counts, use_container_width=True)
             
             with tab1:
-                st.subheader("📝 Filterable Audit Details Table")
-                search_query = st.text_input("🔍 Search records by ticket #, remark, or account name...", "")
+                st.subheader("Filterable Audit Details Table")
+                search_query = st.text_input("Search records by ticket #, remark, or account name...", "")
                 
                 if search_query:
                     filtered_df = df_details[df_details.astype(str).apply(lambda row: row.str.contains(search_query, case=False).any(), axis=1)]
@@ -781,10 +819,10 @@ with main_mode_tab1:
         except Exception as read_err:
             st.error(f"Could not load output preview: {read_err}")
     else:
-        st.info("👈 Select an Employee or **👥 ALL TEAM**, set Date Range, then click **Run Audit Scraper** to generate your report.")
+        st.info("Select an Employee or **ALL TEAM**, set Date Range, then click **Run Audit Scraper** to generate your report.")
 
 with main_mode_tab2:
-    st.subheader("📁 Executive Team Report Merger (Manager Tool)")
+    st.subheader("Executive Team Report Merger (Manager Tool)")
     st.write("Upload individual employee audit Excel files (`audit_report_*.xlsx`) to merge them into a single **Executive Team Report** for management!")
     
     uploaded_files = st.file_uploader(
@@ -795,7 +833,7 @@ with main_mode_tab2:
     )
     
     if uploaded_files:
-        st.success(f"📥 Received {len(uploaded_files)} Excel report file(s) for team merging.")
+        st.success(f"Received {len(uploaded_files)} Excel report file(s) for team merging.")
         
         all_dfs = []
         for file in uploaded_files:
@@ -838,6 +876,8 @@ with main_mode_tab2:
             summary_rows = []
             for emp, grp in master_df.groupby("Employee Name"):
                 tot = len(grp)
+                if tot == 0:
+                    continue  # Exclude technicians on day off (0 tickets)
                 solved = grp["Is_Solved_Val"].sum()
                 rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
                 summary_rows.append({
@@ -855,7 +895,7 @@ with main_mode_tab2:
             team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
             
             total_team_row = pd.DataFrame([{
-                "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
+                "Employee Name": "GRAND TOTAL (ALL TEAM)",
                 "Total Scraped Tickets": tot_tickets_team,
                 "Solved / Handled Count": tot_solved_team,
                 "Solution Rate %": team_rate_val
@@ -879,7 +919,7 @@ with main_mode_tab2:
             
             export_master = master_df.drop(columns=["Is_Solved_Val"], errors="ignore")
             
-            st.markdown("### 🏆 Executive Team Performance Summary")
+            st.markdown("### Executive Team Performance Summary")
             
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -893,12 +933,12 @@ with main_mode_tab2:
             st.dataframe(team_summary_df, use_container_width=True)
             
             st.markdown("---")
-            st.markdown("### 🏷️ Specific Task & Issue Breakdown (WiFi 6 Upgrades, IPTV, Hardware, etc.)")
+            st.markdown("### Specific Task & Issue Breakdown (WiFi 6 Upgrades, IPTV, Hardware, etc.)")
             st.dataframe(work_summary_df, use_container_width=True)
             st.bar_chart(work_summary_df.set_index("Task / Issue Type")["Total_Tickets"])
             
             st.markdown("#### Tickets Workload per Employee")
-            st.bar_chart(team_summary_df[team_summary_df["Employee Name"] != "👥 GRAND TOTAL (ALL TEAM)"].set_index("Employee Name")["Total Scraped Tickets"])
+            st.bar_chart(team_summary_df[team_summary_df["Employee Name"] != "GRAND TOTAL (ALL TEAM)"].set_index("Employee Name")["Total Scraped Tickets"])
             
             st.markdown("#### Combined Filterable Master Audit Table")
             st.dataframe(export_master, use_container_width=True, height=400)
@@ -908,7 +948,7 @@ with main_mode_tab2:
             exec_file_name = f"EXECUTIVE_TEAM_AUDIT_REPORT_{today_filename_str}.xlsx"
             
             st.download_button(
-                label=f"⬇️ Download Combined Executive Team Report ({exec_file_name})",
+                label=f"Download Combined Executive Team Report ({exec_file_name})",
                 data=excel_bytes,
                 file_name=exec_file_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

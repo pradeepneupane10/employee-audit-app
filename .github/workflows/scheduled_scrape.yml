@@ -3,8 +3,8 @@ run-name: ⏱️ Scheduled Team Audit Scraper (Auto-Refresh)
 
 on:
   schedule:
-    # Runs every 15 minutes between 09:00 and 20:00 NPT (UTC 03:15 to 14:15)
-    - cron: '*/15 3-14 * * *'
+    # Runs every 20 minutes between 08:00 and 21:00 NPT (UTC 02:15 to 15:15)
+    - cron: '*/20 2-15 * * *'
   workflow_dispatch: # Allows manual one-click trigger from GitHub Actions
 
 concurrency:
@@ -63,6 +63,6 @@ jobs:
             echo "No new changes to commit."
           else
             git commit -m "Auto-refresh: Update latest team audit reports [skip ci]"
-            git pull --rebase origin main || true
-            git push origin main
+            git pull --rebase -X ours origin main || git pull --rebase origin main || true
+            git push origin main || (git fetch origin main && git rebase -X ours origin/main && git push origin main)
           fi

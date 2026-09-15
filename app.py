@@ -401,10 +401,12 @@ with main_mode_tab1:
     import glob
     existing_reports = glob.glob("audit_report_*.xlsx")
     if existing_reports:
-        # Prioritize VERIFIED report if available to protect against partial cloud scrapes
-        verified_reports = [f for f in existing_reports if "VERIFIED" in f]
-        if verified_reports:
-            latest_on_disk = verified_reports[0]
+        # Prioritize today's report in Nepal Time (UTC+5:45) if available, otherwise most recent on disk
+        today_npt_str = (datetime.utcnow() + timedelta(hours=5, minutes=45)).strftime("%d_%b_%Y")
+        today_reports = [f for f in existing_reports if today_npt_str in f]
+        if today_reports:
+            today_reports.sort(key=os.path.getmtime, reverse=True)
+            latest_on_disk = today_reports[0]
         else:
             existing_reports.sort(key=os.path.getmtime, reverse=True)
             latest_on_disk = existing_reports[0]

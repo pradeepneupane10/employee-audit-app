@@ -1342,11 +1342,13 @@ def main():
             ]
 
             summary_rows = []
-            all_exec_emps = sorted(list(set(DEFAULT_TEAM_MEMBERS + [e for e in df["Employee Name"].dropna().unique().tolist() if e])))
+            all_exec_emps = sorted(list(set([e for e in df["Employee Name"].dropna().unique().tolist() if e])))
             for emp in all_exec_emps:
                 grp = df[df["Employee Name"] == emp]
                 tot = len(grp)
-                solved = grp["Is_Solved_Val"].sum() if tot > 0 else 0
+                if tot == 0:
+                    continue  # Exclude day-off technicians (0 tickets)
+                solved = grp["Is_Solved_Val"].sum()
                 rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
                 summary_rows.append({
                     "Employee Name": emp,
@@ -1388,9 +1390,6 @@ def main():
                 margins=True,
                 margins_name="Grand Total"
             )
-            for emp in DEFAULT_TEAM_MEMBERS:
-                if emp not in matrix_pivot.columns:
-                    matrix_pivot[emp] = 0
             emp_cols_p = sorted([c for c in matrix_pivot.columns if c != "Grand Total"])
             matrix_pivot = matrix_pivot[emp_cols_p + (["Grand Total"] if "Grand Total" in matrix_pivot.columns else [])]
             if "Grand Total" in matrix_pivot.index:

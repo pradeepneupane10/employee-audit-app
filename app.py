@@ -32,89 +32,126 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for Modern, WOW Aesthetics & Mobile Responsiveness
+# Custom CSS for Professional Google Sheets Office Aesthetic
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Google+Sans:wght@400;500;700&display=swap');
     
     html, body, [class*="css"] {
-        font-family: 'DM Sans', sans-serif;
+        font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+        color: #202124;
     }
     
     .stApp {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-        color: #f8fafc;
+        background-color: #F8F9FA !important;
+        color: #202124 !important;
     }
     
-    /* Header Container */
-    .main-header {
-        background: linear-gradient(90deg, #1e3a8a 0%, #3b82f6 100%);
-        padding: 1.5rem 2rem;
-        border-radius: 12px;
-        box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.3);
-        margin-bottom: 2rem;
-        text-align: center;
+    /* Google Sheets Document Top Header */
+    .sheets-header {
+        background-color: #FFFFFF;
+        border: 1px solid #DADCE0;
+        padding: 12px 20px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        border-radius: 6px;
+        box-shadow: 0 1px 2px rgba(60,64,67,0.06);
     }
-    .main-header h1 {
-        color: #ffffff !important;
+    .sheets-icon {
+        width: 38px;
+        height: 38px;
+        background-color: #0F9D58;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
         font-weight: 700;
-        margin: 0;
-        font-size: 2.2rem;
+        font-size: 20px;
     }
-    .main-header p {
-        color: #e0f2fe !important;
-        margin-top: 0.5rem;
-        font-size: 1rem;
+    .sheets-title-box h1 {
+        color: #202124 !important;
+        font-size: 1.35rem !important;
+        font-weight: 600 !important;
+        margin: 0 !important;
+        line-height: 1.3 !important;
+    }
+    .sheets-title-box p {
+        color: #5F6368 !important;
+        font-size: 0.82rem !important;
+        margin: 2px 0 0 0 !important;
     }
     
-    /* KPI Card Container */
+    /* Google Sheets KPI Cells */
     .kpi-card {
-        background: rgba(30, 41, 59, 0.7);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        backdrop-filter: blur(10px);
-        padding: 1.2rem;
-        border-radius: 12px;
+        background-color: #FFFFFF;
+        border: 1px solid #DADCE0;
+        border-radius: 6px;
+        padding: 1rem 0.8rem;
         text-align: center;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .kpi-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 1px 2px rgba(60, 64, 67, 0.04);
     }
     .kpi-title {
-        color: #94a3b8;
-        font-size: 0.9rem;
+        color: #5F6368;
+        font-size: 0.78rem;
+        font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 0.5rem;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
     }
     .kpi-value {
-        color: #38bdf8;
-        font-size: 1.8rem;
+        color: #137333;
+        font-size: 1.65rem;
         font-weight: 700;
     }
     .kpi-subtext {
-        color: #64748b;
-        font-size: 0.8rem;
-        margin-top: 0.3rem;
+        color: #70757A;
+        font-size: 0.75rem;
+        margin-top: 2px;
     }
     
-    /* Download Button */
+    /* Clean Corporate Buttons */
     .stDownloadButton > button {
-        background: linear-gradient(90deg, #10b981 0%, #059669 100%) !important;
-        color: white !important;
-        font-weight: 700 !important;
-        border: none !important;
-        padding: 0.75rem 2rem !important;
-        border-radius: 8px !important;
-        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4) !important;
+        background-color: #137333 !important;
+        color: #FFFFFF !important;
+        font-weight: 600 !important;
+        border: 1px solid #0F9D58 !important;
+        border-radius: 4px !important;
+        padding: 0.6rem 1.5rem !important;
+        box-shadow: 0 1px 2px rgba(60,64,67,0.1) !important;
         width: 100%;
+        transition: background-color 0.2s ease;
+    }
+    .stDownloadButton > button:hover {
+        background-color: #0d5a27 !important;
+        color: #FFFFFF !important;
+    }
+    
+    button[kind="primary"] {
+        background-color: #1A73E8 !important;
+        color: #FFFFFF !important;
+        font-weight: 600 !important;
+        border: none !important;
+        border-radius: 4px !important;
+        box-shadow: 0 1px 2px rgba(60,64,67,0.15) !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #1557B0 !important;
+    }
+
+    /* Google Sheets Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #FFFFFF !important;
+        border-right: 1px solid #DADCE0 !important;
     }
     
     /* Status Box */
     .status-box {
-        background: #1e293b;
-        border-left: 4px solid #3b82f6;
+        background: #F1F3F4;
+        border-left: 4px solid #1A73E8;
+        color: #202124;
         padding: 1rem;
         border-radius: 4px;
         font-family: monospace;
@@ -141,11 +178,14 @@ def setup_playwright():
 
 setup_playwright()
 
-# Title Banner
+# Title Banner - Google Sheets Style
 st.markdown("""
-<div class="main-header">
-    <h1>⚡ CGNET Automated Employee Audit Portal</h1>
-    <p>Run real-time performance audit scraping, analyze ticket resolutions & download executive reports from any device.</p>
+<div class="sheets-header">
+    <div class="sheets-icon">📊</div>
+    <div class="sheets-title-box">
+        <h1>CGNET Employee Performance & Audit Sheet</h1>
+        <p>Official Performance Audit, Resolution Tracking & Executive Reporting</p>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -519,11 +559,13 @@ with main_mode_tab1:
                 ]
                 
                 summary_rows = []
-                all_display_emps = sorted(list(set(DEFAULT_TEAM_MEMBERS + [e for e in df_details["Employee Name"].dropna().unique().tolist() if e])))
+                all_display_emps = sorted(list(set([e for e in df_details["Employee Name"].dropna().unique().tolist() if e])))
                 for emp in all_display_emps:
                     grp = df_details[df_details["Employee Name"] == emp]
                     tot = len(grp)
-                    solved = grp["Is_Solved_Val"].sum() if tot > 0 else 0
+                    if tot == 0:
+                        continue  # Exclude technicians on day off (0 tickets)
+                    solved = grp["Is_Solved_Val"].sum()
                     rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
                     summary_rows.append({
                         "Employee Name": emp,
@@ -559,7 +601,7 @@ with main_mode_tab1:
                     margins=True,
                     margins_name="Grand Total"
                 )
-                cols_ex = [c for c in matrix_pivot_excel.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in matrix_pivot_excel.columns else [])
+                cols_ex = sorted([c for c in matrix_pivot_excel.columns if c != "Grand Total"]) + (["Grand Total"] if "Grand Total" in matrix_pivot_excel.columns else [])
                 matrix_pivot_excel = matrix_pivot_excel[cols_ex]
                 if "Grand Total" in matrix_pivot_excel.index:
                     d_rows = matrix_pivot_excel.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
@@ -656,12 +698,7 @@ with main_mode_tab1:
                         margins_name="Grand Total"
                     )
                     
-                    # Ensure ALL team members are present as columns (even if 0 tickets)
-                    for emp in DEFAULT_TEAM_MEMBERS:
-                        if emp not in pivot_table.columns:
-                            pivot_table[emp] = 0
-                            
-                    # Sort employee columns alphabetically with Grand Total strictly at the end
+                    # Sort active employee columns alphabetically with Grand Total strictly at the end
                     emp_cols = sorted([c for c in pivot_table.columns if c != "Grand Total"])
                     pivot_table = pivot_table[emp_cols + (["Grand Total"] if "Grand Total" in pivot_table.columns else [])]
                     

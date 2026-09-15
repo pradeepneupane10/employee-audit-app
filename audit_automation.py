@@ -632,10 +632,12 @@ click_page_js = r"""
 """
 
 
-def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
+def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs, known_keys=None):
     """
     Worker function executed in parallel threads or sequentially.
     Each worker has its own dedicated Playwright browser instance and session.
+    If known_keys is provided, it stops scraping early the moment it encounters
+    a record that was already processed in a previous run.
     """
     emp_records = []
     with sync_playwright() as p:
@@ -714,6 +716,7 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
             pass
 
         page_num = 1
+        stop_employee_early = False
         while True:
             log(f"[{target_emp}] Scanning page {page_num}...")
             has_grid = safe_eval(page, find_grid_table_js)
@@ -732,6 +735,14 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                 if not row_info:
                     continue
                 
+                # ⚡ Incremental Early-Stopping Check:
+                # If this record was already scraped in a previous run, stop immediately!
+                row_key = f"{target_emp.strip().lower()}|{str(row_info.get('date', '')).strip()}|{str(row_info.get('remark', '')).strip()}"
+                if known_keys and row_key in known_keys:
+                    log(f"[{target_emp}] ⚡ Reached previously scraped record ('{row_info.get('date')}'). Stopping early for {target_emp}!")
+                    stop_employee_early = True
+                    break
+                
                 log(f"[{target_emp}] Record {i+1}/{rows_count} (Page {page_num}): Date='{row_info['date']}' | User='{row_info['userName']}' | Remark='{row_info['remark']}'")
                 
                 # Click row link to open modal
@@ -744,17 +755,25 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                 
                 # Robust check for modal frame
                 modal_frame = None
-                for _ in range(35):
+                for _ in range(40):
                     direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
+                    if direct_f and direct_f.url != "about:blank":
+                        try:
+                            body_len = direct_f.evaluate("() => document.body ? document.body.innerText.length : 0")
+                            if body_len > 20:
+                                modal_frame = direct_f
+                                break
+                        except Exception:
+                            pass
                     candidate_frames = [direct_f] if direct_f else page.frames
                     for frame in candidate_frames:
-                        if not frame:
+                        if not frame or frame.url == "about:blank":
                             continue
                         try:
                             has_header = frame.evaluate(r"""
                             () => {
                                 const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-                                    el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
+                                    el.textContent && el.textContent.trim().toLowerCase().includes('case information') && el.offsetWidth > 0
                                 );
                                 return headers.length > 0;
                             }
@@ -766,37 +785,37 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                             pass
                     if modal_frame:
                         break
-                    page.wait_for_timeout(40)
+                    page.wait_for_timeout(50)
 
-                if not modal_frame:
+                modal_data = {}
+                if modal_frame:
+                    try:
+                        modal_frame.evaluate(scroll_modal_js)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(30)
+                    try:
+                        modal_data = modal_frame.evaluate(extract_modal_data_js) or {}
+                    except Exception:
+                        modal_data = {}
+                    
+                    # Close modal swiftly
+                    closed = False
+                    try:
+                        closed = modal_frame.evaluate(close_modal_js)
+                    except Exception:
+                        pass
+                    if not closed:
+                        try:
+                            modal_frame.locator('text=Close').first.click(timeout=800)
+                        except Exception:
+                            pass
+                else:
+                    # Fallback if modal iframe didn't open: close via iframe click
                     try:
                         frame = page.frame(name="ContentPlaceHolder1_ifrm")
                         if frame:
                             frame.evaluate(close_modal_js)
-                    except Exception:
-                        pass
-                    continue
-                
-                try:
-                    modal_frame.evaluate(scroll_modal_js)
-                except Exception:
-                    pass
-                page.wait_for_timeout(30)
-
-                try:
-                    modal_data = modal_frame.evaluate(extract_modal_data_js)
-                except Exception:
-                    pass
-                
-                # Close modal swiftly and reliably
-                closed = False
-                try:
-                    closed = modal_frame.evaluate(close_modal_js)
-                except Exception:
-                    pass
-                if not closed:
-                    try:
-                        modal_frame.locator('text=Close').first.click(timeout=800)
                     except Exception:
                         pass
                 
@@ -808,6 +827,12 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                     except Exception:
                         break
                     page.wait_for_timeout(30)
+
+                # Fallback: Extract Ticket Number from remark if missing in modal_data
+                if not modal_data.get("Ticket Number"):
+                    tkt_match = re.search(r'TKT\d+', row_info["remark"], re.I)
+                    if tkt_match:
+                        modal_data["Ticket Number"] = tkt_match.group(0).upper()
 
                 combined_record = {
                     "Target Employee": target_emp,
@@ -821,6 +846,9 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs):
                     **modal_data
                 }
                 emp_records.append(combined_record)
+                
+            if stop_employee_early:
+                break
                 
             pagination_items = page.evaluate(get_pagination_info_js)
             if not pagination_items:
@@ -882,6 +910,7 @@ def main():
     parser.add_argument("--from-date", default=today_str, help=f"From Date, e.g. '05 Aug 2026' (default: {today_str})")
     parser.add_argument("--to-date", default=today_str, help=f"To Date, e.g. '05 Aug 2026' (default: {today_str})")
     parser.add_argument("--non-interactive", action="store_true", help="Run in full automated mode without prompt")
+    parser.add_argument("--force-full-scrape", action="store_true", help="Force full scrape without using incremental cache")
     args = parser.parse_args()
 
     employee_name = args.employee
@@ -915,7 +944,25 @@ def main():
     safe_from = re.sub(r'[^a-zA-Z0-9]', '_', from_date)
     output_file = os.path.join(output_dir, f"audit_report_{safe_emp}_{safe_from}.xlsx")
 
-    # Start Playwright
+    # ⚡ Load Existing Records for Incremental / Delta Scraping
+    existing_records = []
+    known_keys = set()
+    if os.path.exists(output_file) and not args.force_full_scrape:
+        try:
+            existing_df = pd.read_excel(output_file, sheet_name="Audit Details")
+            if not existing_df.empty:
+                existing_records = existing_df.to_dict(orient="records")
+                for r in existing_records:
+                    emp_k = str(r.get("Target Employee", r.get("Employee Name", ""))).strip().lower()
+                    date_k = str(r.get("Grid Date", "")).strip()
+                    rem_k = str(r.get("Grid Remark", "")).strip()
+                    if emp_k and (date_k or rem_k):
+                        known_keys.add(f"{emp_k}|{date_k}|{rem_k}")
+                log(f"⚡ Incremental Mode Active: Loaded {len(existing_records)} existing records ({len(known_keys)} unique keys) from {os.path.basename(output_file)}.")
+        except Exception as read_ex:
+            log(f"Could not load existing file for incremental check: {read_ex}. Running full scrape.", "WARNING")
+            existing_records = []
+            known_keys = set()
 
     # Prepare list of target employees
     if ',' in employee_name:
@@ -938,422 +985,442 @@ def main():
         log(f"Using system chromium at {chrome_path}")
         launch_kwargs["executable_path"] = chrome_path
 
-    scraped_records = []
+    newly_scraped = []
 
     if len(emp_list) == 1:
         log(f"Starting audit scrape for: {emp_list[0]}")
-        scraped_records = scrape_single_employee(emp_list[0], from_date, to_date, launch_kwargs)
+        newly_scraped = scrape_single_employee(emp_list[0], from_date, to_date, launch_kwargs, known_keys=known_keys)
     else:
         max_workers = min(8, len(emp_list))
         log(f"⚡ Launching {max_workers} HIGH-SPEED PARALLEL WORKERS to scrape {len(emp_list)} employees simultaneously...")
         from concurrent.futures import ThreadPoolExecutor, as_completed
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_emp = {
-                executor.submit(scrape_single_employee, emp, from_date, to_date, launch_kwargs): emp
+                executor.submit(scrape_single_employee, emp, from_date, to_date, launch_kwargs, known_keys=known_keys): emp
                 for emp in emp_list
             }
             for future in as_completed(future_to_emp):
                 emp_done = future_to_emp[future]
                 try:
                     emp_recs = future.result()
-                    scraped_records.extend(emp_recs)
-                    log(f"✅ Finished [{emp_done}]: collected {len(emp_recs)} records.")
+                    newly_scraped.extend(emp_recs)
+                    log(f"✅ Finished [{emp_done}]: collected {len(emp_recs)} new records.")
                 except Exception as exc:
                     log(f"❌ Error during scrape for [{emp_done}]: {exc}", "ERROR")
 
-    # Post processing
+    # Combine existing records with newly scraped records safely
+    if existing_records:
+        records_dict = {}
+        for r in existing_records:
+            emp_k = str(r.get("Target Employee", r.get("Employee Name", ""))).strip().lower()
+            date_k = str(r.get("Grid Date", "")).strip()
+            rem_k = str(r.get("Grid Remark", "")).strip()
+            key = f"{emp_k}|{date_k}|{rem_k}"
+            records_dict[key] = r
+            
+        for r in newly_scraped:
+            emp_k = str(r.get("Target Employee", r.get("Employee Name", ""))).strip().lower()
+            date_k = str(r.get("Grid Date", "")).strip()
+            rem_k = str(r.get("Grid Remark", "")).strip()
+            key = f"{emp_k}|{date_k}|{rem_k}"
+            records_dict[key] = r
+            
+        scraped_records = list(records_dict.values())
+        log(f"✨ Total combined records after incremental update: {len(scraped_records)} ({len(newly_scraped)} newly added).")
+    else:
+        scraped_records = newly_scraped
 
     # --- Post-Processing & Report Generation ---
-        if not scraped_records:
-            log("No records were scraped. Unable to generate report.", "ERROR")
-            return
+    if not scraped_records:
+        log("No records were scraped. Unable to generate report.", "ERROR")
+        return
+        
+    log(f"Scraped {len(scraped_records)} total audit records. Compiling report...")
+        
+    df = pd.DataFrame(scraped_records)
+    
+    required_cols = ['Ticket Number', 'Status', 'Category', 'Sub Category', 'Assigned Date', 'Created Date', 'Last Modified Date']
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = None
             
-        log(f"Scraped {len(scraped_records)} total audit records. Compiling report...")
+    df['dt_assigned'] = df['Assigned Date'].apply(parse_date_robustly)
+    df['dt_created'] = df['Created Date'].apply(parse_date_robustly)
+    df['dt_completed'] = df['Last Modified Date'].apply(parse_date_robustly)
+    
+    df['duration_assigned_sec'] = (df['dt_completed'] - df['dt_assigned']).dt.total_seconds()
+    df['duration_created_sec'] = (df['dt_completed'] - df['dt_created']).dt.total_seconds()
+    
+    df['duration_assigned'] = pd.to_timedelta(df['duration_assigned_sec'], unit='s')
+    df['duration_created'] = pd.to_timedelta(df['duration_created_sec'], unit='s')
+    df['Resolution Time (From Assigned)'] = df['duration_assigned'].apply(format_duration)
+    df['Resolution Time (From Created)'] = df['duration_created'].apply(format_duration)
+    
+    df['Status_Cleaned'] = df['Status'].astype(str).str.strip().str.capitalize()
+    
+    def classify_ticket_handling(row):
+        status_clean = str(row.get('Status', '')).strip().capitalize()
+        raw_status = str(row.get('Status', '')).strip()
+        grid_remark = str(row.get('Grid Remark', '')).strip()
+        assign_team = str(row.get('Assign Team', '')).strip()
+        assign_user = str(row.get('Assign User', '')).strip()
         
-        df = pd.DataFrame(scraped_records)
+        remark_lower = grid_remark.lower()
+        team_lower = assign_team.lower()
+        user_lower = assign_user.lower()
         
-        required_cols = ['Ticket Number', 'Status', 'Category', 'Sub Category', 'Assigned Date', 'Created Date', 'Last Modified Date']
-        for col in required_cols:
-            if col not in df.columns:
-                df[col] = None
-                
-        df['dt_assigned'] = df['Assigned Date'].apply(parse_date_robustly)
-        df['dt_created'] = df['Created Date'].apply(parse_date_robustly)
-        df['dt_completed'] = df['Last Modified Date'].apply(parse_date_robustly)
+        is_ms_or_transferred = (
+            'ms' in team_lower or 'ms' in user_lower or
+            'ms' in remark_lower or 'assign' in remark_lower or
+            'transfer' in remark_lower or 'forward' in remark_lower or
+            'handover' in remark_lower or 'handler' in remark_lower
+        )
         
-        df['duration_assigned_sec'] = (df['dt_completed'] - df['dt_assigned']).dt.total_seconds()
-        df['duration_created_sec'] = (df['dt_completed'] - df['dt_created']).dt.total_seconds()
-        
-        df['duration_assigned'] = pd.to_timedelta(df['duration_assigned_sec'], unit='s')
-        df['duration_created'] = pd.to_timedelta(df['duration_created_sec'], unit='s')
-        df['Resolution Time (From Assigned)'] = df['duration_assigned'].apply(format_duration)
-        df['Resolution Time (From Created)'] = df['duration_created'].apply(format_duration)
-        
-        df['Status_Cleaned'] = df['Status'].astype(str).str.strip().str.capitalize()
-        
-        def classify_ticket_handling(row):
-            status_clean = str(row.get('Status', '')).strip().capitalize()
-            raw_status = str(row.get('Status', '')).strip()
-            grid_remark = str(row.get('Grid Remark', '')).strip()
-            assign_team = str(row.get('Assign Team', '')).strip()
-            assign_user = str(row.get('Assign User', '')).strip()
-            
-            remark_lower = grid_remark.lower()
-            team_lower = assign_team.lower()
-            user_lower = assign_user.lower()
-            
-            is_ms_or_transferred = (
-                'ms' in team_lower or 'ms' in user_lower or
-                'ms' in remark_lower or 'assign' in remark_lower or
-                'transfer' in remark_lower or 'forward' in remark_lower or
-                'handover' in remark_lower or 'handler' in remark_lower
-            )
-            
-            if status_clean in ['Completed', 'Closed']:
-                if is_ms_or_transferred and status_clean != 'Completed':
-                    res_type = "Assigned / Transferred to MS / Other Handler"
-                else:
-                    res_type = f"Completed ({raw_status if raw_status else 'Completed'})"
-                return True, res_type, grid_remark
-            elif is_ms_or_transferred:
+        if status_clean in ['Completed', 'Closed']:
+            if is_ms_or_transferred and status_clean != 'Completed':
                 res_type = "Assigned / Transferred to MS / Other Handler"
-                return True, res_type, grid_remark
             else:
-                res_type = f"Other / In Progress ({raw_status if raw_status else 'Unspecified'})"
-                return False, res_type, grid_remark
+                res_type = f"Completed ({raw_status if raw_status else 'Completed'})"
+            return True, res_type, grid_remark
+        elif is_ms_or_transferred:
+            res_type = "Assigned / Transferred to MS / Other Handler"
+            return True, res_type, grid_remark
+        else:
+            res_type = f"Other / In Progress ({raw_status if raw_status else 'Unspecified'})"
+            return False, res_type, grid_remark
 
-        res_results = df.apply(classify_ticket_handling, axis=1)
-        df['Is_Solved_Or_Assigned'] = [r[0] for r in res_results]
-        df['Resolution Type'] = [r[1] for r in res_results]
-        df['Action / Transfer Remark'] = [r[2] for r in res_results]
+    res_results = df.apply(classify_ticket_handling, axis=1)
+    df['Is_Solved_Or_Assigned'] = [r[0] for r in res_results]
+    df['Resolution Type'] = [r[1] for r in res_results]
+    df['Action / Transfer Remark'] = [r[2] for r in res_results]
+    
+    def classify_work_type(row):
+        remark = str(row.get('Grid Remark', '')).strip()
+        solution = str(row.get('Solution Given', '')).strip()
+        employee_note = str(row.get('Employee Remark / Solution Note', '')).strip()
+        title = str(row.get('Title', '')).strip()
+        category = str(row.get('Category', '')).strip()
         
-        def classify_work_type(row):
-            remark = str(row.get('Grid Remark', '')).strip()
-            solution = str(row.get('Solution Given', '')).strip()
-            employee_note = str(row.get('Employee Remark / Solution Note', '')).strip()
-            title = str(row.get('Title', '')).strip()
-            category = str(row.get('Category', '')).strip()
-            
-            full_text = f"{title} {remark} {solution} {employee_note}".upper()
-            
-            # Robust WiFi 6 detection (Title, Category, Sub Category, Remark, Solution Note, Serial Number)
-            wifi6_regex = r'wifi\s*6|wifi-6|wifi6|wi-fi\s*6|router\s*6|alcl|nokia.*wifi|upgrade.*wifi|wifi.*upgrade|dual\s*band'
-            is_wifi6_upgrade = (
-                bool(re.search(wifi6_regex, full_text, re.I)) or
-                'WIFI 6' in full_text or 'WIFI-6' in full_text or 'WIFI6' in full_text or 'ALCL' in full_text
-            )
-            
-            if is_wifi6_upgrade:
-                return 'WiFi 6 Upgrade'
-            elif 'IPTV' in full_text or 'IPTV' in category.upper():
-                return 'IPTV Issue'
-            else:
-                return 'General / Other Issues'
-
-        df['Task / Issue Type'] = df.apply(classify_work_type, axis=1)
+        full_text = f"{title} {remark} {solution} {employee_note}".upper()
         
-        # Ensure Employee Remark / Solution Note column is clean
-        if 'Employee Remark / Solution Note' not in df.columns:
-            df['Employee Remark / Solution Note'] = ""
-            
-        df['Employee Remark / Solution Note'] = df.apply(
-            lambda r: str(r.get('Solution Given', '')).strip() or str(r.get('Employee Remark / Solution Note', '')).strip() or str(r.get('Grid Remark', '')).strip(),
-            axis=1
+        # Robust WiFi 6 detection (Title, Category, Sub Category, Remark, Solution Note, Serial Number)
+        wifi6_regex = r'wifi\s*6|wifi-6|wifi6|wi-fi\s*6|router\s*6|alcl|nokia.*wifi|upgrade.*wifi|wifi.*upgrade|dual\s*band'
+        is_wifi6_upgrade = (
+            bool(re.search(wifi6_regex, full_text, re.I)) or
+            'WIFI 6' in full_text or 'WIFI-6' in full_text or 'WIFI6' in full_text or 'ALCL' in full_text
         )
         
-        solved_mask = df['Is_Solved_Or_Assigned']
+        if is_wifi6_upgrade:
+            return 'WiFi 6 Upgrade'
+        elif 'IPTV' in full_text or 'IPTV' in category.upper():
+            return 'IPTV Issue'
+        else:
+            return 'General / Other Issues'
+
+    df['Task / Issue Type'] = df.apply(classify_work_type, axis=1)
+    
+    # Ensure Employee Remark / Solution Note column is clean
+    if 'Employee Remark / Solution Note' not in df.columns:
+        df['Employee Remark / Solution Note'] = ""
         
-        total_records = len(df)
-        solved_tickets = df[solved_mask]
-        num_solved = len(solved_tickets)
-        
-        avg_assigned_duration = solved_tickets['duration_assigned'].mean()
-        avg_created_duration = solved_tickets['duration_created'].mean()
-        
-        # 1. Category Breakdown for Solved Tickets
-        cat_group = solved_tickets.groupby(['Category', 'Sub Category'], dropna=False).agg(
-            Count=('Ticket Number', 'count'),
-            Avg_Duration_Assigned=('duration_assigned_sec', 'mean'),
-            Avg_Duration_Created=('duration_created_sec', 'mean')
-        ).reset_index()
-        cat_group['Avg Resolution Time (From Assigned)'] = pd.to_timedelta(cat_group['Avg_Duration_Assigned'], unit='s').apply(format_duration)
-        cat_group['Avg Resolution Time (From Created)'] = pd.to_timedelta(cat_group['Avg_Duration_Created'], unit='s').apply(format_duration)
-        cat_group.drop(columns=['Avg_Duration_Assigned', 'Avg_Duration_Created'], inplace=True)
-        
-        # 2. TOTAL Tickets Category Breakdown (All Tickets Scraped)
-        cat_total_group = df.groupby(['Category', 'Sub Category'], dropna=False).agg(
-            Total_Tickets=('Ticket Number', 'count'),
-            Solved_Count=('Is_Solved_Or_Assigned', 'sum')
-        ).reset_index()
-        cat_total_group['Solution Rate %'] = (cat_total_group['Solved_Count'] / cat_total_group['Total_Tickets'] * 100).round(1).astype(str) + '%'
-        cat_total_group.rename(columns={
-            'Total_Tickets': 'Total Scraped Tickets',
-            'Solved_Count': 'Solved / Handled Count'
-        }, inplace=True)
-        
-        # 3. High-level Category Summary
-        cat_summary_overall = df.groupby('Category', dropna=False).agg(
-            Total_Tickets=('Ticket Number', 'count'),
-            Solved_Count=('Is_Solved_Or_Assigned', 'sum')
-        ).reset_index()
-        cat_summary_overall['Category Solution Rate %'] = (cat_summary_overall['Solved_Count'] / cat_summary_overall['Total_Tickets'] * 100).round(1).astype(str) + '%'
-        cat_summary_overall.rename(columns={
-            'Total_Tickets': 'Total Scraped Tickets',
-            'Solved_Count': 'Solved / Handled Count'
-        }, inplace=True)
-        
-        solved_list_cols = [
-            'Ticket Number', 'Account Name', 'Category', 'Sub Category', 
-            'Status', 'Resolution Type', 'Employee Remark / Solution Note', 'Action / Transfer Remark',
-            'Assigned Date', 'Created Date', 'Last Modified Date',
-            'Resolution Time (From Assigned)', 'Resolution Time (From Created)'
+    df['Employee Remark / Solution Note'] = df.apply(
+        lambda r: str(r.get('Solution Given', '')).strip() or str(r.get('Employee Remark / Solution Note', '')).strip() or str(r.get('Grid Remark', '')).strip(),
+        axis=1
+    )
+    
+    solved_mask = df['Is_Solved_Or_Assigned']
+    
+    total_records = len(df)
+    solved_tickets = df[solved_mask]
+    num_solved = len(solved_tickets)
+    
+    avg_assigned_duration = solved_tickets['duration_assigned'].mean()
+    avg_created_duration = solved_tickets['duration_created'].mean()
+    
+    # 1. Category Breakdown for Solved Tickets
+    cat_group = solved_tickets.groupby(['Category', 'Sub Category'], dropna=False).agg(
+        Count=('Ticket Number', 'count'),
+        Avg_Duration_Assigned=('duration_assigned_sec', 'mean'),
+        Avg_Duration_Created=('duration_created_sec', 'mean')
+    ).reset_index()
+    cat_group['Avg Resolution Time (From Assigned)'] = pd.to_timedelta(cat_group['Avg_Duration_Assigned'], unit='s').apply(format_duration)
+    cat_group['Avg Resolution Time (From Created)'] = pd.to_timedelta(cat_group['Avg_Duration_Created'], unit='s').apply(format_duration)
+    cat_group.drop(columns=['Avg_Duration_Assigned', 'Avg_Duration_Created'], inplace=True)
+    
+    # 2. TOTAL Tickets Category Breakdown (All Tickets Scraped)
+    cat_total_group = df.groupby(['Category', 'Sub Category'], dropna=False).agg(
+        Total_Tickets=('Ticket Number', 'count'),
+        Solved_Count=('Is_Solved_Or_Assigned', 'sum')
+    ).reset_index()
+    cat_total_group['Solution Rate %'] = (cat_total_group['Solved_Count'] / cat_total_group['Total_Tickets'] * 100).round(1).astype(str) + '%'
+    cat_total_group.rename(columns={
+        'Total_Tickets': 'Total Scraped Tickets',
+        'Solved_Count': 'Solved / Handled Count'
+    }, inplace=True)
+    
+    # 3. High-level Category Summary
+    cat_summary_overall = df.groupby('Category', dropna=False).agg(
+        Total_Tickets=('Ticket Number', 'count'),
+        Solved_Count=('Is_Solved_Or_Assigned', 'sum')
+    ).reset_index()
+    cat_summary_overall['Category Solution Rate %'] = (cat_summary_overall['Solved_Count'] / cat_summary_overall['Total_Tickets'] * 100).round(1).astype(str) + '%'
+    cat_summary_overall.rename(columns={
+        'Total_Tickets': 'Total Scraped Tickets',
+        'Solved_Count': 'Solved / Handled Count'
+    }, inplace=True)
+    
+    solved_list_cols = [
+        'Ticket Number', 'Account Name', 'Category', 'Sub Category', 
+        'Status', 'Resolution Type', 'Employee Remark / Solution Note', 'Action / Transfer Remark',
+        'Assigned Date', 'Created Date', 'Last Modified Date',
+        'Resolution Time (From Assigned)', 'Resolution Time (From Created)'
+    ]
+    solved_list_cols = [c for c in solved_list_cols if c in solved_tickets.columns]
+    solved_list = solved_tickets[solved_list_cols].copy()
+    
+    summary_metrics = pd.DataFrame({
+        "Metric": [
+            "Total Audit Records Scraped",
+            "Total Tickets Solved / Handled (Completed or MS Assigned)",
+            "Ticket Solution Rate",
+            "Average Completion Time (From Assigned Date)",
+            "Average Completion Time (From Created Date)"
+        ],
+        "Value": [
+            total_records,
+            num_solved,
+            f"{(num_solved / total_records * 100):.1f}%" if total_records > 0 else "0.0%",
+            format_duration(avg_assigned_duration),
+            format_duration(avg_created_duration)
         ]
-        solved_list_cols = [c for c in solved_list_cols if c in solved_tickets.columns]
-        solved_list = solved_tickets[solved_list_cols].copy()
+    })
+    
+    df_export = df.drop(columns=[
+        'dt_assigned', 'dt_created', 'dt_completed', 
+        'duration_assigned_sec', 'duration_created_sec',
+        'duration_assigned', 'duration_created', 'Status_Cleaned',
+        'Is_Solved_Or_Assigned'
+    ], errors='ignore')
+    
+    log(f"Writing Excel report to {output_file}...")
+    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+        df_export.to_excel(writer, sheet_name="Audit Details", index=False)
+        summary_metrics.to_excel(writer, sheet_name="Summary Report", index=False, startrow=0, startcol=0)
         
-        summary_metrics = pd.DataFrame({
-            "Metric": [
-                "Total Audit Records Scraped",
-                "Total Tickets Solved / Handled (Completed or MS Assigned)",
-                "Ticket Solution Rate",
-                "Average Completion Time (From Assigned Date)",
-                "Average Completion Time (From Created Date)"
-            ],
-            "Value": [
-                total_records,
-                num_solved,
-                f"{(num_solved / total_records * 100):.1f}%" if total_records > 0 else "0.0%",
-                format_duration(avg_assigned_duration),
-                format_duration(avg_created_duration)
-            ]
-        })
+        start_row_overall = len(summary_metrics) + 3
+        pd.DataFrame([["Overall Category Summary"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_overall-1, startcol=0)
+        cat_summary_overall.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_overall, startcol=0)
         
-        df_export = df.drop(columns=[
-            'dt_assigned', 'dt_created', 'dt_completed', 
-            'duration_assigned_sec', 'duration_created_sec',
-            'duration_assigned', 'duration_created', 'Status_Cleaned',
-            'Is_Solved_Or_Assigned'
-        ], errors='ignore')
-        
-        log(f"Writing Excel report to {output_file}...")
-        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-            df_export.to_excel(writer, sheet_name="Audit Details", index=False)
-            summary_metrics.to_excel(writer, sheet_name="Summary Report", index=False, startrow=0, startcol=0)
-            
-            start_row_overall = len(summary_metrics) + 3
-            pd.DataFrame([["Overall Category Summary"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_overall-1, startcol=0)
-            cat_summary_overall.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_overall, startcol=0)
-            
-            start_row_total_cat = start_row_overall + len(cat_summary_overall) + 3
-            pd.DataFrame([["Total Tickets Breakdown by Category & Sub Category"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_total_cat-1, startcol=0)
-            cat_total_group.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_total_cat, startcol=0)
+        start_row_total_cat = start_row_overall + len(cat_summary_overall) + 3
+        pd.DataFrame([["Total Tickets Breakdown by Category & Sub Category"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_total_cat-1, startcol=0)
+        cat_total_group.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_total_cat, startcol=0)
 
-            start_row_solved = start_row_total_cat + len(cat_total_group) + 3
-            pd.DataFrame([["Detailed Solved / Handled Tickets List"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_solved-1, startcol=0)
-            solved_list.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_solved, startcol=0)
+        start_row_solved = start_row_total_cat + len(cat_total_group) + 3
+        pd.DataFrame([["Detailed Solved / Handled Tickets List"]]).to_excel(writer, sheet_name="Summary Report", index=False, header=False, startrow=start_row_solved-1, startcol=0)
+        solved_list.to_excel(writer, sheet_name="Summary Report", index=False, startrow=start_row_solved, startcol=0)
 
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    
+    wb = openpyxl.load_workbook(output_file)
+    
+    ws_details = wb["Audit Details"]
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
+    cell_font = Font(name="Segoe UI", size=10)
+    thin_border = Border(
+        left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
+        top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
+    )
+    
+    for col in range(1, ws_details.max_column + 1):
+        cell = ws_details.cell(row=1, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         
-        wb = openpyxl.load_workbook(output_file)
-        
-        ws_details = wb["Audit Details"]
-        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-        header_font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF")
-        cell_font = Font(name="Segoe UI", size=10)
-        thin_border = Border(
-            left=Side(style='thin', color='D9D9D9'), right=Side(style='thin', color='D9D9D9'),
-            top=Side(style='thin', color='D9D9D9'), bottom=Side(style='thin', color='D9D9D9')
-        )
-        
+    for row in range(2, ws_details.max_row + 1):
         for col in range(1, ws_details.max_column + 1):
-            cell = ws_details.cell(row=1, column=col)
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell = ws_details.cell(row=row, column=col)
+            cell.font = cell_font
+            cell.border = thin_border
             
-        for row in range(2, ws_details.max_row + 1):
-            for col in range(1, ws_details.max_column + 1):
-                cell = ws_details.cell(row=row, column=col)
-                cell.font = cell_font
-                cell.border = thin_border
-                
-        for col in ws_details.columns:
-            max_len = max(len(str(cell.value or '')) for cell in col)
-            col_letter = openpyxl.utils.get_column_letter(col[0].column)
-            ws_details.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 40)
+    for col in ws_details.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+        ws_details.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 40)
+        
+    ws_summary = wb["Summary Report"]
+    
+    def style_summary_range(start_r, end_r, start_c, end_c, is_header=False):
+        fill = PatternFill(start_color="2F5597" if is_header else "F2F2F2", end_color="2F5597" if is_header else "F2F2F2", fill_type="solid")
+        font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF" if is_header else "000000")
+        for r in range(start_r, end_r + 1):
+            for c in range(start_c, end_c + 1):
+                cell = ws_summary.cell(row=r, column=c)
+                if is_header:
+                    cell.fill = fill
+                    cell.font = font
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+                else:
+                    cell.font = Font(name="Segoe UI", size=10)
+                    cell.border = thin_border
+                    if r % 2 == 1:
+                        cell.fill = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+
+    style_summary_range(1, 1, 1, 2, is_header=True)
+    style_summary_range(2, len(summary_metrics)+1, 1, 2, is_header=False)
+    
+    section_title_font = Font(name="Segoe UI", size=12, bold=True, color="1F4E78")
+    ws_summary.cell(row=start_row_overall, column=1).font = section_title_font
+    ws_summary.cell(row=start_row_total_cat, column=1).font = section_title_font
+    ws_summary.cell(row=start_row_solved, column=1).font = section_title_font
+    
+    style_summary_range(start_row_overall+1, start_row_overall+1, 1, len(cat_summary_overall.columns), is_header=True)
+    style_summary_range(start_row_overall+2, start_row_overall+1+len(cat_summary_overall), 1, len(cat_summary_overall.columns), is_header=False)
+    
+    style_summary_range(start_row_total_cat+1, start_row_total_cat+1, 1, len(cat_total_group.columns), is_header=True)
+    style_summary_range(start_row_total_cat+2, start_row_total_cat+1+len(cat_total_group), 1, len(cat_total_group.columns), is_header=False)
+    
+    style_summary_range(start_row_solved+1, start_row_solved+1, 1, len(solved_list.columns), is_header=True)
+    style_summary_range(start_row_solved+2, start_row_solved+1+len(solved_list), 1, len(solved_list.columns), is_header=False)
+    
+    for col in ws_summary.columns:
+        max_len = 0
+        for cell in col:
+            val = str(cell.value or '')
+            if val in ["Overall Category Summary", "Total Tickets Breakdown by Category & Sub Category", "Detailed Solved / Handled Tickets List"]:
+                continue
+            max_len = max(max_len, len(val))
+        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+        ws_summary.column_dimensions[col_letter].width = min(max(max_len + 4, 12), 45)
+        
+    wb.save(output_file)
+    
+    # --- Print Console Summary Report ---
+    print("\n" + "=" * 80)
+    print("                        DAILY PERFORMANCE SUMMARY")
+    print("=" * 80)
+    for _, row in summary_metrics.iterrows():
+        print(f"{row['Metric']:<50} : {row['Value']}")
+    print("-" * 80)
+    print("\nBreakdown by Ticket Category:")
+    print(f"{'Category':<25} | {'Sub Category':<30} | {'Total Count':<12} | {'Solved Count'}")
+    print("-" * 80)
+    for _, row in cat_total_group.iterrows():
+        cat = str(row['Category'])[:23]
+        sub = str(row['Sub Category'])[:28]
+        tot = row['Total Scraped Tickets']
+        cnt = row['Solved / Handled Count']
+        print(f"{cat:<25} | {sub:<30} | {tot:<12} | {cnt}")
+    print("=" * 80)
+    log(f"Scraped details and compiled report saved to: {output_file}")
+    print("=" * 80)
+
+    # Generate Executive Team Excel report if multiple employees or ALL TEAM
+    if len(emp_list) > 1 or "ALL" in employee_name.upper():
+        exec_output_file = os.path.join(output_dir, f"EXECUTIVE_TEAM_AUDIT_REPORT_{safe_from}.xlsx")
+        log(f"Building Combined Executive Team Report: {exec_output_file}...")
+        try:
+            emp_col = 'Grid Employee Name' if 'Grid Employee Name' in df.columns else 'Target Employee'
+            df['Employee Name'] = df[emp_col].fillna(df.get('Target Employee', 'Unknown'))
             
-        ws_summary = wb["Summary Report"]
-        
-        def style_summary_range(start_r, end_r, start_c, end_c, is_header=False):
-            fill = PatternFill(start_color="2F5597" if is_header else "F2F2F2", end_color="2F5597" if is_header else "F2F2F2", fill_type="solid")
-            font = Font(name="Segoe UI", size=11, bold=True, color="FFFFFF" if is_header else "000000")
-            for r in range(start_r, end_r + 1):
-                for c in range(start_c, end_c + 1):
-                    cell = ws_summary.cell(row=r, column=c)
-                    if is_header:
-                        cell.fill = fill
-                        cell.font = font
-                        cell.alignment = Alignment(horizontal="center", vertical="center")
-                    else:
-                        cell.font = Font(name="Segoe UI", size=10)
-                        cell.border = thin_border
-                        if r % 2 == 1:
-                            cell.fill = PatternFill(start_color="F9FAFB", end_color="F9FAFB", fill_type="solid")
+            def is_solved_exec(row):
+                st_val = str(row.get("Status", "")).strip().lower()
+                rm_val = str(row.get("Grid Remark", "")).strip().lower()
+                if st_val in ["completed", "closed"]:
+                    return True
+                if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
+                    return True
+                return False
 
-        style_summary_range(1, 1, 1, 2, is_header=True)
-        style_summary_range(2, len(summary_metrics)+1, 1, 2, is_header=False)
-        
-        section_title_font = Font(name="Segoe UI", size=12, bold=True, color="1F4E78")
-        ws_summary.cell(row=start_row_overall, column=1).font = section_title_font
-        ws_summary.cell(row=start_row_total_cat, column=1).font = section_title_font
-        ws_summary.cell(row=start_row_solved, column=1).font = section_title_font
-        
-        style_summary_range(start_row_overall+1, start_row_overall+1, 1, len(cat_summary_overall.columns), is_header=True)
-        style_summary_range(start_row_overall+2, start_row_overall+1+len(cat_summary_overall), 1, len(cat_summary_overall.columns), is_header=False)
-        
-        style_summary_range(start_row_total_cat+1, start_row_total_cat+1, 1, len(cat_total_group.columns), is_header=True)
-        style_summary_range(start_row_total_cat+2, start_row_total_cat+1+len(cat_total_group), 1, len(cat_total_group.columns), is_header=False)
-        
-        style_summary_range(start_row_solved+1, start_row_solved+1, 1, len(solved_list.columns), is_header=True)
-        style_summary_range(start_row_solved+2, start_row_solved+1+len(solved_list), 1, len(solved_list.columns), is_header=False)
-        
-        for col in ws_summary.columns:
-            max_len = 0
-            for cell in col:
-                val = str(cell.value or '')
-                if val in ["Overall Category Summary", "Total Tickets Breakdown by Category & Sub Category", "Detailed Solved / Handled Tickets List"]:
-                    continue
-                max_len = max(max_len, len(val))
-            col_letter = openpyxl.utils.get_column_letter(col[0].column)
-            ws_summary.column_dimensions[col_letter].width = min(max(max_len + 4, 12), 45)
+            df['Is_Solved_Val'] = df.apply(is_solved_exec, axis=1)
+
+            summary_rows = []
+            for emp, grp in df.groupby("Employee Name"):
+                tot = len(grp)
+                solved = grp["Is_Solved_Val"].sum()
+                rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
+                summary_rows.append({
+                    "Employee Name": emp,
+                    "Total Scraped Tickets": tot,
+                    "Solved / Handled Count": solved,
+                    "Solution Rate %": rate
+                })
+                
+            team_summary_df = pd.DataFrame(summary_rows)
+            tot_tickets_team = len(df)
+            tot_solved_team = df["Is_Solved_Val"].sum()
+            team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
             
-        wb.save(output_file)
-        
-        # --- Print Console Summary Report ---
-        print("\n" + "=" * 80)
-        print("                        DAILY PERFORMANCE SUMMARY")
-        print("=" * 80)
-        for _, row in summary_metrics.iterrows():
-            print(f"{row['Metric']:<50} : {row['Value']}")
-        print("-" * 80)
-        print("\nBreakdown by Ticket Category:")
-        print(f"{'Category':<25} | {'Sub Category':<30} | {'Total Count':<12} | {'Solved Count'}")
-        print("-" * 80)
-        for _, row in cat_total_group.iterrows():
-            cat = str(row['Category'])[:23]
-            sub = str(row['Sub Category'])[:28]
-            tot = row['Total Scraped Tickets']
-            cnt = row['Solved / Handled Count']
-            print(f"{cat:<25} | {sub:<30} | {tot:<12} | {cnt}")
-        print("=" * 80)
-        log(f"Scraped details and compiled report saved to: {output_file}")
-        print("=" * 80)
+            total_team_row = pd.DataFrame([{
+                "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
+                "Total Scraped Tickets": tot_tickets_team,
+                "Solved / Handled Count": tot_solved_team,
+                "Solution Rate %": team_rate_val
+            }])
+            team_summary_df = pd.concat([team_summary_df, total_team_row], ignore_index=True)
 
-        # Generate Executive Team Excel report if multiple employees or ALL TEAM
-        if len(emp_list) > 1 or "ALL" in employee_name.upper():
-            exec_output_file = os.path.join(output_dir, f"EXECUTIVE_TEAM_AUDIT_REPORT_{safe_from}.xlsx")
-            log(f"Building Combined Executive Team Report: {exec_output_file}...")
-            try:
-                emp_col = 'Grid Employee Name' if 'Grid Employee Name' in df.columns else 'Target Employee'
-                df['Employee Name'] = df[emp_col].fillna(df.get('Target Employee', 'Unknown'))
-                
-                def is_solved_exec(row):
-                    st_val = str(row.get("Status", "")).strip().lower()
-                    rm_val = str(row.get("Grid Remark", "")).strip().lower()
-                    if st_val in ["completed", "closed"]:
-                        return True
-                    if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
-                        return True
-                    return False
+            work_summary_df = df.groupby("Task / Issue Type", dropna=False).agg(
+                Total_Tickets=("Ticket Number", "count"),
+                Solved_Count=("Is_Solved_Val", "sum")
+            ).reset_index()
+            work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
+            work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(df) * 100).round(1).astype(str) + '%'
 
-                df['Is_Solved_Val'] = df.apply(is_solved_exec, axis=1)
+            export_master = df_export.copy()
+            if 'Employee Name' not in export_master.columns:
+                export_master['Employee Name'] = df['Employee Name']
 
-                summary_rows = []
-                for emp, grp in df.groupby("Employee Name"):
-                    tot = len(grp)
-                    solved = grp["Is_Solved_Val"].sum()
-                    rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
-                    summary_rows.append({
-                        "Employee Name": emp,
-                        "Total Scraped Tickets": tot,
-                        "Solved / Handled Count": solved,
-                        "Solution Rate %": rate
-                    })
-                    
-                team_summary_df = pd.DataFrame(summary_rows)
-                tot_tickets_team = len(df)
-                tot_solved_team = df["Is_Solved_Val"].sum()
-                team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
-                
-                total_team_row = pd.DataFrame([{
-                    "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
-                    "Total Scraped Tickets": tot_tickets_team,
-                    "Solved / Handled Count": tot_solved_team,
-                    "Solution Rate %": team_rate_val
-                }])
-                team_summary_df = pd.concat([team_summary_df, total_team_row], ignore_index=True)
+            matrix_cat_col = 'Sub Category' if 'Sub Category' in df.columns else 'Task / Issue Type'
+            df[matrix_cat_col] = df[matrix_cat_col].fillna('Other / Uncategorized')
+            df_dedup_p = df.drop_duplicates(subset=['Ticket Number'], keep='first') if 'Ticket Number' in df.columns else df
+            matrix_pivot = pd.crosstab(
+                df_dedup_p[matrix_cat_col],
+                df_dedup_p['Employee Name'],
+                margins=True,
+                margins_name="Grand Total"
+            )
+            cols_p = [c for c in matrix_pivot.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in matrix_pivot.columns else [])
+            matrix_pivot = matrix_pivot[cols_p]
+            if "Grand Total" in matrix_pivot.index:
+                d_rows_p = matrix_pivot.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
+                t_row_p = matrix_pivot.loc[["Grand Total"]]
+                matrix_pivot = pd.concat([d_rows_p, t_row_p])
 
-                work_summary_df = df.groupby("Task / Issue Type", dropna=False).agg(
-                    Total_Tickets=("Ticket Number", "count"),
-                    Solved_Count=("Is_Solved_Val", "sum")
-                ).reset_index()
-                work_summary_df["Solution Rate %"] = (work_summary_df["Solved_Count"] / work_summary_df["Total_Tickets"] * 100).round(1).astype(str) + '%'
-                work_summary_df["% Share of Total"] = (work_summary_df["Total_Tickets"] / len(df) * 100).round(1).astype(str) + '%'
+            with pd.ExcelWriter(exec_output_file, engine='openpyxl') as exec_writer:
+                team_summary_df.to_excel(exec_writer, sheet_name="Team Executive Summary", index=False)
+                work_summary_df.to_excel(exec_writer, sheet_name="Category Summary", index=False)
+                matrix_pivot.to_excel(exec_writer, sheet_name="Technician Matrix Pivot")
+                export_master.to_excel(exec_writer, sheet_name="Master Audit Details", index=False)
 
-                export_master = df_export.copy()
-                if 'Employee Name' not in export_master.columns:
-                    export_master['Employee Name'] = df['Employee Name']
-
-                matrix_cat_col = 'Sub Category' if 'Sub Category' in df.columns else 'Task / Issue Type'
-                df[matrix_cat_col] = df[matrix_cat_col].fillna('Other / Uncategorized')
-                df_dedup_p = df.drop_duplicates(subset=['Ticket Number'], keep='first') if 'Ticket Number' in df.columns else df
-                matrix_pivot = pd.crosstab(
-                    df_dedup_p[matrix_cat_col],
-                    df_dedup_p['Employee Name'],
-                    margins=True,
-                    margins_name="Grand Total"
-                )
-                cols_p = [c for c in matrix_pivot.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in matrix_pivot.columns else [])
-                matrix_pivot = matrix_pivot[cols_p]
-                if "Grand Total" in matrix_pivot.index:
-                    d_rows_p = matrix_pivot.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
-                    t_row_p = matrix_pivot.loc[["Grand Total"]]
-                    matrix_pivot = pd.concat([d_rows_p, t_row_p])
-
-                with pd.ExcelWriter(exec_output_file, engine='openpyxl') as exec_writer:
-                    team_summary_df.to_excel(exec_writer, sheet_name="Team Executive Summary", index=False)
-                    work_summary_df.to_excel(exec_writer, sheet_name="Category Summary", index=False)
-                    matrix_pivot.to_excel(exec_writer, sheet_name="Technician Matrix Pivot")
-                    export_master.to_excel(exec_writer, sheet_name="Master Audit Details", index=False)
-
-                wb_exec = openpyxl.load_workbook(exec_output_file)
-                for sheetname in wb_exec.sheetnames:
-                    ws = wb_exec[sheetname]
+            wb_exec = openpyxl.load_workbook(exec_output_file)
+            for sheetname in wb_exec.sheetnames:
+                ws = wb_exec[sheetname]
+                for col in range(1, ws.max_column + 1):
+                    cell = ws.cell(row=1, column=col)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                for row in range(2, ws.max_row + 1):
                     for col in range(1, ws.max_column + 1):
-                        cell = ws.cell(row=1, column=col)
-                        cell.fill = header_fill
-                        cell.font = header_font
-                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                    for row in range(2, ws.max_row + 1):
-                        for col in range(1, ws.max_column + 1):
-                            cell = ws.cell(row=row, column=col)
-                            cell.font = cell_font
-                            cell.border = thin_border
-                            if (sheetname == "Team Executive Summary" or sheetname == "Technician Matrix Pivot") and row == ws.max_row:
-                                cell.font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
-                                cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-                            elif sheetname == "Technician Matrix Pivot" and col == ws.max_column:
-                                cell.font = Font(name="Segoe UI", size=10, bold=True, color="1F4E78")
-                                cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-                    for col in ws.columns:
-                        max_len = max(len(str(cell.value or '')) for cell in col)
-                        col_letter = openpyxl.utils.get_column_letter(col[0].column)
-                        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
-                wb_exec.save(exec_output_file)
-                log(f"Combined Executive Team report saved to: {exec_output_file}")
-            except Exception as exec_err:
-                log(f"Could not build executive report: {exec_err}", "WARNING")
+                        cell = ws.cell(row=row, column=col)
+                        cell.font = cell_font
+                        cell.border = thin_border
+                        if (sheetname == "Team Executive Summary" or sheetname == "Technician Matrix Pivot") and row == ws.max_row:
+                            cell.font = Font(name="Segoe UI", size=11, bold=True, color="1F4E78")
+                            cell.fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+                        elif sheetname == "Technician Matrix Pivot" and col == ws.max_column:
+                            cell.font = Font(name="Segoe UI", size=10, bold=True, color="1F4E78")
+                            cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+                for col in ws.columns:
+                    max_len = max(len(str(cell.value or '')) for cell in col)
+                    col_letter = openpyxl.utils.get_column_letter(col[0].column)
+                    ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+            wb_exec.save(exec_output_file)
+            log(f"Combined Executive Team report saved to: {exec_output_file}")
+        except Exception as exec_err:
+            log(f"Could not build executive report: {exec_err}", "WARNING")
 
 if __name__ == "__main__":
     main()

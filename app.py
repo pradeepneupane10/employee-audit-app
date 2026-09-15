@@ -513,10 +513,17 @@ with main_mode_tab1:
 
                 df_details["Is_Solved_Val"] = df_details.apply(is_solved_row, axis=1)
                 
+                DEFAULT_TEAM_MEMBERS = [
+                    "Ajit Shrestha", "Chandramani Tharu", "Om Neupane", "Rajesh Maharjan",
+                    "Sabin Giri", "Sanjeev Giri", "Shashikant Chaudhary", "Sunil Chaudhary"
+                ]
+                
                 summary_rows = []
-                for emp, grp in df_details.groupby("Employee Name"):
+                all_display_emps = sorted(list(set(DEFAULT_TEAM_MEMBERS + [e for e in df_details["Employee Name"].dropna().unique().tolist() if e])))
+                for emp in all_display_emps:
+                    grp = df_details[df_details["Employee Name"] == emp]
                     tot = len(grp)
-                    solved = grp["Is_Solved_Val"].sum()
+                    solved = grp["Is_Solved_Val"].sum() if tot > 0 else 0
                     rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
                     summary_rows.append({
                         "Employee Name": emp,
@@ -581,33 +588,31 @@ with main_mode_tab1:
 
             st.markdown("<br>", unsafe_allow_html=True)
             
-            tab0, tab1, tab2, tab3 = st.tabs([
-                "👥 Technician Solved Matrix (Pivot)",
+            tab0, tab_team, tab_cat, tab1, tab3 = st.tabs([
+                "👥 Technician Category Matrix (Pivot)",
+                "🏆 Team Executive Summary (Technicians)",
+                "🏷️ Category Summary",
                 "📝 Scraped Audit Details",
-                "🏷️ Task & Category Breakdown",
                 "📊 Raw Summary Sheet"
             ])
             
             with tab0:
-                st.subheader("👥 Technician Solved Tickets Breakdown (Pivot Table)")
-                st.caption("Exact category and sub-category ticket count solved per technician matching Excel Pivot Table layout.")
+                st.subheader("👥 Technician Category Breakdown Matrix (Pivot Table)")
+                st.caption("Exact category and sub-category ticket count per technician matching Excel Pivot Table layout.")
                 
                 col_p1, col_p2, col_p3 = st.columns([3, 2, 2])
                 with col_p1:
                     status_opts = sorted(df_details["Status"].dropna().unique().tolist()) if "Status" in df_details.columns else []
-                    default_statuses = [s for s in status_opts if s.lower() in ["completed", "closed"]]
-                    if not default_statuses:
-                        default_statuses = status_opts
                     chosen_statuses = st.multiselect(
                         "Status Filter (Multiple Items)",
                         options=status_opts,
-                        default=default_statuses,
-                        help="Filter tickets by status (Completed, Closed, On Hold, etc.)"
+                        default=status_opts,
+                        help="Filter tickets by status (Completed, Closed, In Progress, etc.). Defaults to all to show full picture."
                     )
                 with col_p2:
                     breakdown_col_choice = st.selectbox(
                         "Row Category Level",
-                        options=["Sub Category", "Task / Issue Type", "Category"],
+                        options=["Category & Sub Category", "Sub Category", "Category", "Task / Issue Type"],
                         index=0
                     )
                 with col_p3:
@@ -626,9 +631,21 @@ with main_mode_tab1:
                 if dedup_choice and "Ticket Number" in matrix_filtered.columns:
                     matrix_filtered = matrix_filtered.drop_duplicates(subset=["Ticket Number"], keep="first")
                     
-                actual_breakdown_col = breakdown_col_choice if breakdown_col_choice in matrix_filtered.columns else "Task / Issue Type"
-                actual_emp_col = "Employee Name" if "Employee Name" in matrix_filtered.columns else ("Target Employee" if "Target Employee" in matrix_filtered.columns else "Grid Employee Name")
+                if breakdown_col_choice == "Category & Sub Category":
+                    cat_col = 'Category' if 'Category' in matrix_filtered.columns else 'Task / Issue Type'
+                    sub_col = 'Sub Category' if 'Sub Category' in matrix_filtered.columns else None
+                    if sub_col:
+                        matrix_filtered["Cat_SubCat"] = matrix_filtered.apply(
+                            lambda r: f"{str(r.get(cat_col, 'Other')).strip()} ➔ {str(r.get(sub_col, '')).strip()}" if pd.notna(r.get(sub_col)) and str(r.get(sub_col)).strip() != '' else str(r.get(cat_col, 'Other')).strip(),
+                            axis=1
+                        )
+                    else:
+                        matrix_filtered["Cat_SubCat"] = matrix_filtered[cat_col].fillna("Other")
+                    actual_breakdown_col = "Cat_SubCat"
+                else:
+                    actual_breakdown_col = breakdown_col_choice if breakdown_col_choice in matrix_filtered.columns else "Task / Issue Type"
                 
+                actual_emp_col = "Employee Name" if "Employee Name" in matrix_filtered.columns else ("Target Employee" if "Target Employee" in matrix_filtered.columns else "Grid Employee Name")
                 matrix_filtered[actual_breakdown_col] = matrix_filtered[actual_breakdown_col].fillna("Other / Uncategorized")
                 
                 if not matrix_filtered.empty and actual_emp_col in matrix_filtered.columns:
@@ -639,9 +656,14 @@ with main_mode_tab1:
                         margins_name="Grand Total"
                     )
                     
-                    # Ensure Grand Total is strictly the LAST column on the right
-                    ordered_cols = [c for c in pivot_table.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in pivot_table.columns else [])
-                    pivot_table = pivot_table[ordered_cols]
+                    # Ensure ALL team members are present as columns (even if 0 tickets)
+                    for emp in DEFAULT_TEAM_MEMBERS:
+                        if emp not in pivot_table.columns:
+                            pivot_table[emp] = 0
+                            
+                    # Sort employee columns alphabetically with Grand Total strictly at the end
+                    emp_cols = sorted([c for c in pivot_table.columns if c != "Grand Total"])
+                    pivot_table = pivot_table[emp_cols + (["Grand Total"] if "Grand Total" in pivot_table.columns else [])]
                     
                     # Sort rows by Grand Total descending (keep Grand Total strictly at bottom)
                     if "Grand Total" in pivot_table.index:
@@ -664,8 +686,47 @@ with main_mode_tab1:
                 else:
                     st.warning("No records found for the selected filter.")
             
+            with tab_team:
+                st.subheader("🏆 Team Executive Summary (Technician Performance)")
+                st.caption("Overall ticket volume, solved counts, and solution percentage per technician (matching Excel Sheet 1).")
+                st.dataframe(team_summary_df, use_container_width=True)
+                
+                team_csv = team_summary_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="⬇️ Download Team Executive Summary (CSV)",
+                    data=team_csv,
+                    file_name=f"team_executive_summary_{datetime.now().strftime('%d_%b_%Y')}.csv",
+                    mime="text/csv"
+                )
+                
+            with tab_cat:
+                st.subheader("🏷️ Category & Issue Type Summary")
+                st.caption("Distribution of tickets and solution rate by category (matching Excel Sheet 2).")
+                st.dataframe(work_summary_df, use_container_width=True)
+                
+                cat_csv = work_summary_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="⬇️ Download Category Summary (CSV)",
+                    data=cat_csv,
+                    file_name=f"category_summary_{datetime.now().strftime('%d_%b_%Y')}.csv",
+                    mime="text/csv"
+                )
+                
+                st.markdown("---")
+                st.subheader("📊 Category Volume Chart")
+                st.bar_chart(work_summary_df.set_index('Task / Issue Type')['Total_Tickets'])
+                
+                st.markdown("---")
+                st.subheader("Portal Category & Sub-Category Detailed Breakdown")
+                if 'Category' in df_details.columns:
+                    sub_col = 'Sub Category' if 'Sub Category' in df_details.columns else ('Sub Sub Category' if 'Sub Sub Category' in df_details.columns else None)
+                    group_cols = ['Category'] + ([sub_col] if sub_col else [])
+                    cat_counts = df_details.groupby(group_cols, dropna=False).size().reset_index(name='Total Tickets Count')
+                    cat_counts = cat_counts.sort_values(by='Total Tickets Count', ascending=False)
+                    st.dataframe(cat_counts, use_container_width=True)
+            
             with tab1:
-                st.subheader("Filterable Audit Details Table")
+                st.subheader("📝 Filterable Audit Details Table")
                 search_query = st.text_input("🔍 Search records by ticket #, remark, or account name...", "")
                 
                 if search_query:
@@ -675,28 +736,6 @@ with main_mode_tab1:
                     
                 st.dataframe(filtered_df, use_container_width=True, height=400)
                 
-            with tab2:
-                st.subheader("Specific Task / Issue Breakdown (WiFi 6, IPTV, Router, etc.)")
-                work_counts = df_details['Task / Issue Type'].value_counts().reset_index()
-                work_counts.columns = ['Task / Issue Type', 'Total Tickets Count']
-                work_counts['% Share'] = (work_counts['Total Tickets Count'] / len(df_details) * 100).round(1).astype(str) + '%'
-                
-                st.dataframe(work_counts, use_container_width=True)
-                st.bar_chart(work_counts.set_index('Task / Issue Type')['Total Tickets Count'])
-                
-                st.markdown("---")
-                st.subheader("Portal Category & Sub-Category Breakdown")
-                if 'Category' in df_details.columns:
-                    sub_col = 'Sub Category' if 'Sub Category' in df_details.columns else ('Sub Sub Category' if 'Sub Sub Category' in df_details.columns else None)
-                    group_cols = ['Category'] + ([sub_col] if sub_col else [])
-                    
-                    cat_counts = df_details.groupby(group_cols, dropna=False).size().reset_index(name='Total Tickets Count')
-                    cat_counts = cat_counts.sort_values(by='Total Tickets Count', ascending=False)
-                    
-                    st.dataframe(cat_counts, use_container_width=True)
-                else:
-                    st.info("No Category column found in details dataset.")
-                    
             with tab3:
                 st.subheader("Summary Report Sheet View")
                 df_full_summary = pd.read_excel(xls, sheet_name="Summary Report")

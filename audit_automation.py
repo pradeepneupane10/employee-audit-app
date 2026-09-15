@@ -1336,10 +1336,17 @@ def main():
 
             df['Is_Solved_Val'] = df.apply(is_solved_exec, axis=1)
 
+            DEFAULT_TEAM_MEMBERS = [
+                "Ajit Shrestha", "Chandramani Tharu", "Om Neupane", "Rajesh Maharjan",
+                "Sabin Giri", "Sanjeev Giri", "Shashikant Chaudhary", "Sunil Chaudhary"
+            ]
+
             summary_rows = []
-            for emp, grp in df.groupby("Employee Name"):
+            all_exec_emps = sorted(list(set(DEFAULT_TEAM_MEMBERS + [e for e in df["Employee Name"].dropna().unique().tolist() if e])))
+            for emp in all_exec_emps:
+                grp = df[df["Employee Name"] == emp]
                 tot = len(grp)
-                solved = grp["Is_Solved_Val"].sum()
+                solved = grp["Is_Solved_Val"].sum() if tot > 0 else 0
                 rate = f"{(solved / tot * 100):.1f}%" if tot > 0 else "0.0%"
                 summary_rows.append({
                     "Employee Name": emp,
@@ -1381,8 +1388,11 @@ def main():
                 margins=True,
                 margins_name="Grand Total"
             )
-            cols_p = [c for c in matrix_pivot.columns if c != "Grand Total"] + (["Grand Total"] if "Grand Total" in matrix_pivot.columns else [])
-            matrix_pivot = matrix_pivot[cols_p]
+            for emp in DEFAULT_TEAM_MEMBERS:
+                if emp not in matrix_pivot.columns:
+                    matrix_pivot[emp] = 0
+            emp_cols_p = sorted([c for c in matrix_pivot.columns if c != "Grand Total"])
+            matrix_pivot = matrix_pivot[emp_cols_p + (["Grand Total"] if "Grand Total" in matrix_pivot.columns else [])]
             if "Grand Total" in matrix_pivot.index:
                 d_rows_p = matrix_pivot.drop(index="Grand Total").sort_values(by="Grand Total", ascending=False)
                 t_row_p = matrix_pivot.loc[["Grand Total"]]

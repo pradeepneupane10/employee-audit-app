@@ -1363,7 +1363,7 @@ def main():
             team_rate_val = f"{(tot_solved_team / tot_tickets_team * 100):.1f}%" if tot_tickets_team > 0 else "0.0%"
             
             total_team_row = pd.DataFrame([{
-                "Employee Name": "👥 GRAND TOTAL (ALL TEAM)",
+                "Employee Name": "GRAND TOTAL (ALL TEAM)",
                 "Total Scraped Tickets": tot_tickets_team,
                 "Solved / Handled Count": tot_solved_team,
                 "Solution Rate %": team_rate_val

@@ -624,7 +624,16 @@ click_page_js = r"""
     }
     
     if (targetLink) {
-        targetLink.click();
+        const href = targetLink.getAttribute('href') || '';
+        if (href.toLowerCase().startsWith('javascript:')) {
+            try {
+                window.eval(href.substring(11));
+            } catch(e) {
+                targetLink.click();
+            }
+        } else {
+            targetLink.click();
+        }
         return true;
     }
     return false;
@@ -967,6 +976,11 @@ def main():
     # Prepare list of target employees
     if ',' in employee_name:
         emp_list = [e.strip() for e in employee_name.split(',') if e.strip()]
+    elif employee_name.strip().upper() in ["ALL", "ALL TEAM", "TEAM"]:
+        emp_list = [
+            "Ajit Shrestha", "Chandramani Tharu", "Om Neupane", "Rajesh Maharjan",
+            "Sabin Giri", "Sanjeev Giri", "Shashikant Chaudhary", "Sunil Chaudhary"
+        ]
     else:
         emp_list = [employee_name.strip()]
 

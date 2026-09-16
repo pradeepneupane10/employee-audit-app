@@ -1435,7 +1435,7 @@ def main():
     try:
         master_csv_path = os.path.join(output_dir, "master_audit_history.csv")
         df_to_append = df_export.copy()
-        df_to_append['Report Date'] = from_date_str
+        df_to_append['Report Date'] = from_date
         if os.path.exists(master_csv_path):
             existing_master = pd.read_csv(master_csv_path)
             combined_master = pd.concat([existing_master, df_to_append], ignore_index=True)

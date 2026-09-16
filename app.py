@@ -12,7 +12,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
@@ -473,14 +473,28 @@ with main_mode_tab1:
             st.error(f"Scraper error encountered: {e}")
             st.exception(e)
 
-    # Display Dashboard if output file exists
-    output_file = st.session_state.get("last_output_file", None)
-    # Automatically discover the latest available audit report on disk
+    # Automatically discover master historical database and available daily reports
     import glob
+    master_csv_file = "master_audit_history.csv"
+    df_master_all = None
+    if os.path.exists(master_csv_file):
+        try:
+            df_master_all = pd.read_csv(master_csv_file)
+        except Exception:
+            df_master_all = None
+
     existing_reports = glob.glob("audit_report_*.xlsx")
+    nepal_tz = timezone(timedelta(hours=5, minutes=45))
+    today_npt_dt = datetime.now(nepal_tz)
+    today_npt_str = today_npt_dt.strftime("%d_%b_%Y")
+    today_date_str = today_npt_dt.strftime("%d %b %Y")
+    yest_npt_dt = today_npt_dt - timedelta(days=1)
+    yest_npt_str = yest_npt_dt.strftime("%d_%b_%Y")
+    yest_date_str = yest_npt_dt.strftime("%d %b %Y")
+
+    # Discover latest report file on disk
+    latest_on_disk = None
     if existing_reports:
-        # Prioritize today's report in Nepal Time (UTC+5:45) if available, otherwise most recent on disk
-        today_npt_str = (datetime.utcnow() + timedelta(hours=5, minutes=45)).strftime("%d_%b_%Y")
         today_reports = [f for f in existing_reports if today_npt_str in f]
         if today_reports:
             today_reports.sort(key=os.path.getmtime, reverse=True)
@@ -489,41 +503,146 @@ with main_mode_tab1:
             existing_reports.sort(key=os.path.getmtime, reverse=True)
             latest_on_disk = existing_reports[0]
             
-        output_file = latest_on_disk
+    output_file = st.session_state.get("last_output_file", latest_on_disk)
+    if output_file and os.path.exists(output_file):
         st.session_state["last_output_file"] = output_file
         mod_time = datetime.fromtimestamp(os.path.getmtime(output_file)).strftime("%Y-%m-%d %H:%M:%S")
         st.session_state["last_run_time"] = mod_time
 
-    if output_file and os.path.exists(output_file):
-        dash_header_col, dash_refresh_col = st.columns([4, 1])
+    # Build View Period Options for Google Sheets dropdown
+    period_options = [f"Today ({today_date_str})"]
+    past_dates = []
+    if df_master_all is not None and "Report Date" in df_master_all.columns:
+        for d in df_master_all["Report Date"].dropna().unique():
+            d_clean = str(d).strip()
+            if d_clean and d_clean != today_date_str and d_clean not in past_dates:
+                past_dates.append(d_clean)
+    try:
+        past_dates = sorted(past_dates, key=lambda d: datetime.strptime(d, "%d %b %Y"), reverse=True)
+    except Exception:
+        past_dates = sorted(past_dates, reverse=True)
+
+    for pd_date in past_dates:
+        if pd_date == yest_date_str:
+            period_options.append(f"Yesterday ({yest_date_str})")
+        else:
+            period_options.append(pd_date)
+
+    current_month_str = today_npt_dt.strftime("%B %Y")
+    period_options.append("Weekly (Last 7 Days Combined)")
+    period_options.append(f"Month to Date ({current_month_str})")
+    period_options.append("All-Time Master History")
+
+    has_data = (output_file and os.path.exists(output_file)) or (df_master_all is not None and not df_master_all.empty)
+
+    if has_data:
+        dash_header_col, dash_period_col, dash_refresh_col = st.columns([3, 2, 1])
         with dash_header_col:
             st.markdown("### Performance Analytics Dashboard")
-            st.caption(f"**Live View** | Last updated: {st.session_state.get('last_run_time', 'Recently')} | Report File: `{os.path.basename(output_file)}`")
+            st.caption(f"**Live View** | Last updated: {st.session_state.get('last_run_time', 'Recently')}")
+        with dash_period_col:
+            selected_period = st.selectbox(
+                "Select Report View Period",
+                options=period_options,
+                index=0,
+                help="Switch between Today, Yesterday, Weekly, or Month-to-Date data without re-scraping!"
+            )
         with dash_refresh_col:
-            if st.button("Refresh Data", use_container_width=True):
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            if st.button("Refresh", use_container_width=True):
                 st.session_state.clear()
                 st.rerun()
         
         try:
-            xls = pd.ExcelFile(output_file)
-            df_details = pd.read_excel(xls, sheet_name="Audit Details")
-            df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
-            
+            df_details = None
+            df_summary = None
+            if selected_period.startswith("Today"):
+                today_file = [f for f in existing_reports if today_npt_str in f]
+                if today_file:
+                    xls = pd.ExcelFile(today_file[0])
+                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
+                    if "Summary Report" in xls.sheet_names:
+                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                elif df_master_all is not None and "Report Date" in df_master_all.columns:
+                    df_details = df_master_all[df_master_all["Report Date"].str.strip() == today_date_str].copy()
+            elif selected_period.startswith("Yesterday"):
+                yest_file = [f for f in existing_reports if yest_npt_str in f]
+                if yest_file:
+                    xls = pd.ExcelFile(yest_file[0])
+                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
+                    if "Summary Report" in xls.sheet_names:
+                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                elif df_master_all is not None and "Report Date" in df_master_all.columns:
+                    df_details = df_master_all[df_master_all["Report Date"].str.strip() == yest_date_str].copy()
+            elif "Weekly" in selected_period:
+                if df_master_all is not None and "Report Date" in df_master_all.columns:
+                    cutoff = today_npt_dt - timedelta(days=7)
+                    def in_week(d):
+                        try:
+                            return datetime.strptime(str(d).strip(), "%d %b %Y").date() >= cutoff.date()
+                        except Exception:
+                            return False
+                    df_details = df_master_all[df_master_all["Report Date"].apply(in_week)].copy()
+            elif "Month to Date" in selected_period:
+                curr_my = today_npt_dt.strftime("%b %Y")
+                if df_master_all is not None and "Report Date" in df_master_all.columns:
+                    df_details = df_master_all[df_master_all["Report Date"].str.contains(curr_my, case=False, na=False)].copy()
+            elif "All-Time" in selected_period:
+                if df_master_all is not None:
+                    df_details = df_master_all.copy()
+            else:
+                clean_target = selected_period.strip()
+                past_file = [f for f in existing_reports if clean_target.replace(" ", "_") in f]
+                if past_file:
+                    xls = pd.ExcelFile(past_file[0])
+                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
+                    if "Summary Report" in xls.sheet_names:
+                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                elif df_master_all is not None and "Report Date" in df_master_all.columns:
+                    df_details = df_master_all[df_master_all["Report Date"].str.strip() == clean_target].copy()
+
+            if df_details is None or df_details.empty:
+                if output_file and os.path.exists(output_file):
+                    xls = pd.ExcelFile(output_file)
+                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
+                    if "Summary Report" in xls.sheet_names:
+                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                elif df_master_all is not None and not df_master_all.empty:
+                    df_details = df_master_all.copy()
+                else:
+                    df_details = pd.DataFrame()
+
             df_details['Task / Issue Type'] = df_details.apply(classify_work_type, axis=1)
             
+            def is_solved_row(row):
+                st_val = str(row.get("Status", "")).strip().lower()
+                rm_val = str(row.get("Grid Remark", "")).strip().lower()
+                if st_val in ["completed", "closed"]:
+                    return True
+                if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
+                    return True
+                return False
+
+            df_details["Is_Solved_Val"] = df_details.apply(is_solved_row, axis=1)
+
             col1, col2, col3, col4, col5 = st.columns(5)
             
+            tot_kpi_records = len(df_details)
+            tot_kpi_solved = int(df_details["Is_Solved_Val"].sum()) if not df_details.empty else 0
+            kpi_rate_val = f"{(tot_kpi_solved / tot_kpi_records * 100):.1f}%" if tot_kpi_records > 0 else "0.0%"
+
             def get_val(metric_name):
-                row = df_summary[df_summary["Metric"].str.contains(metric_name, case=False, na=False)]
-                if not row.empty:
-                    return str(row.iloc[0]["Value"])
+                if df_summary is not None and not df_summary.empty:
+                    row = df_summary[df_summary["Metric"].str.contains(metric_name, case=False, na=False)]
+                    if not row.empty:
+                        return str(row.iloc[0]["Value"])
                 return "N/A"
 
             with col1:
                 st.markdown(f"""
                 <div class="kpi-card">
                     <div class="kpi-title">Total Records</div>
-                    <div class="kpi-value">{get_val("Total Audit Records Scraped")}</div>
+                    <div class="kpi-value">{tot_kpi_records}</div>
                     <div class="kpi-subtext">Scraped logs</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -532,7 +651,7 @@ with main_mode_tab1:
                 st.markdown(f"""
                 <div class="kpi-card">
                     <div class="kpi-title">Solved / Handled</div>
-                    <div class="kpi-value">{get_val("Total Tickets Solved")}</div>
+                    <div class="kpi-value">{tot_kpi_solved}</div>
                     <div class="kpi-subtext">Completed or MS Assigned</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -541,7 +660,7 @@ with main_mode_tab1:
                 st.markdown(f"""
                 <div class="kpi-card">
                     <div class="kpi-title">Solution Rate</div>
-                    <div class="kpi-value">{get_val("Ticket Solution Rate")}</div>
+                    <div class="kpi-value">{kpi_rate_val}</div>
                     <div class="kpi-subtext">Completion %</div>
                 </div>
                 """, unsafe_allow_html=True)
@@ -565,31 +684,20 @@ with main_mode_tab1:
                 """, unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown("### Download Executive Report")
+            st.markdown(f"### Download Executive Report ({selected_period})")
 
             emp_name_col = "Grid Employee Name" if "Grid Employee Name" in df_details.columns else "Employee Name"
-            has_multiple_emps = (emp_name_col in df_details.columns and df_details[emp_name_col].dropna().nunique() > 1) or ("ALL_TEAM" in output_file) or ("," in str(employee_name))
+            has_multiple_emps = (emp_name_col in df_details.columns and df_details[emp_name_col].dropna().nunique() > 1) or ("ALL_TEAM" in str(output_file)) or ("," in str(employee_name)) or (tot_kpi_records > 0)
 
             if has_multiple_emps:
-                today_filename_str = datetime.now().strftime("%d_%b_%Y")
-                exec_file_name = f"EXECUTIVE_TEAM_AUDIT_REPORT_{today_filename_str}.xlsx"
+                period_slug = re.sub(r'[^a-zA-Z0-9]', '_', selected_period.split(' ')[0])
+                exec_file_name = f"EXECUTIVE_TEAM_AUDIT_REPORT_{period_slug}_{today_npt_str}.xlsx"
                 
                 # Always build dynamically from the current active df_details to guarantee 100% match with the screen
                 if "Employee Name" not in df_details.columns and emp_name_col in df_details.columns:
                     df_details["Employee Name"] = df_details[emp_name_col]
                 elif "Employee Name" not in df_details.columns:
                     df_details["Employee Name"] = df_details.get("Target Employee", "Team Member")
-                        
-                def is_solved_row(row):
-                    st_val = str(row.get("Status", "")).strip().lower()
-                    rm_val = str(row.get("Grid Remark", "")).strip().lower()
-                    if st_val in ["completed", "closed"]:
-                        return True
-                    if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
-                        return True
-                    return False
-
-                df_details["Is_Solved_Val"] = df_details.apply(is_solved_row, axis=1)
                 
                 DEFAULT_TEAM_MEMBERS = [
                     "Ajit Shrestha", "Chandramani Tharu", "Om Neupane", "Rajesh Maharjan",
@@ -813,8 +921,13 @@ with main_mode_tab1:
                 
             with tab3:
                 st.subheader("Summary Report Sheet View")
-                df_full_summary = pd.read_excel(xls, sheet_name="Summary Report")
-                st.dataframe(df_full_summary, use_container_width=True)
+                if 'df_summary' in locals() and df_summary is not None and not df_summary.empty:
+                    st.dataframe(df_summary, use_container_width=True)
+                elif 'xls' in locals() and hasattr(xls, 'sheet_names') and "Summary Report" in xls.sheet_names:
+                    df_full_summary = pd.read_excel(xls, sheet_name="Summary Report")
+                    st.dataframe(df_full_summary, use_container_width=True)
+                else:
+                    st.dataframe(team_summary_df, use_container_width=True)
 
         except Exception as read_err:
             st.error(f"Could not load output preview: {read_err}")

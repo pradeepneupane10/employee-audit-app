@@ -58,7 +58,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f audit_report_*.xlsx EXECUTIVE_TEAM_AUDIT_REPORT_*.xlsx || true
+          git add -f audit_report_*.xlsx EXECUTIVE_TEAM_AUDIT_REPORT_*.xlsx master_audit_history.csv || true
           if git diff --staged --quiet; then
             echo "No new changes to commit."
           else

@@ -1431,5 +1431,24 @@ def main():
         except Exception as exec_err:
             log(f"Could not build executive report: {exec_err}", "WARNING")
 
+    # --- Update Master Historical Database (master_audit_history.csv) ---
+    try:
+        master_csv_path = os.path.join(output_dir, "master_audit_history.csv")
+        df_to_append = df_export.copy()
+        df_to_append['Report Date'] = from_date_str
+        if os.path.exists(master_csv_path):
+            existing_master = pd.read_csv(master_csv_path)
+            combined_master = pd.concat([existing_master, df_to_append], ignore_index=True)
+        else:
+            combined_master = df_to_append
+        
+        subset_cols = [c for c in ['Ticket Number', 'Grid Date', 'Grid Remark', 'Grid Operation'] if c in combined_master.columns]
+        if subset_cols:
+            combined_master = combined_master.drop_duplicates(subset=subset_cols, keep='last')
+        combined_master.to_csv(master_csv_path, index=False, encoding='utf-8')
+        log(f"Updated master historical records database ({len(combined_master)} total records): {master_csv_path}")
+    except Exception as hist_err:
+        log(f"Could not update master history CSV: {hist_err}", "WARNING")
+
 if __name__ == "__main__":
     main()

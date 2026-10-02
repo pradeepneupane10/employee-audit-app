@@ -479,7 +479,7 @@ with main_mode_tab1:
     df_master_all = None
     if os.path.exists(master_csv_file):
         try:
-            df_master_all = pd.read_csv(master_csv_file)
+            df_master_all = pd.read_csv(master_csv_file, dtype=str)
         except Exception:
             df_master_all = None
 

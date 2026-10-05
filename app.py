@@ -474,14 +474,30 @@ with main_mode_tab1:
             st.exception(e)
 
     # Automatically discover master historical database and available daily reports
+    @st.cache_data(ttl=60, show_spinner=False)
+    def get_cached_master_csv(file_path):
+        if os.path.exists(file_path):
+            try:
+                return pd.read_csv(file_path, dtype=str)
+            except Exception:
+                return None
+        return None
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def get_cached_excel_report(file_path):
+        if file_path and os.path.exists(file_path):
+            try:
+                xls = pd.ExcelFile(file_path)
+                df_det = pd.read_excel(xls, sheet_name="Audit Details") if "Audit Details" in xls.sheet_names else None
+                df_sum = pd.read_excel(xls, sheet_name="Summary Report", nrows=5) if "Summary Report" in xls.sheet_names else None
+                return df_det, df_sum
+            except Exception:
+                return None, None
+        return None, None
+
     import glob
     master_csv_file = "master_audit_history.csv"
-    df_master_all = None
-    if os.path.exists(master_csv_file):
-        try:
-            df_master_all = pd.read_csv(master_csv_file, dtype=str)
-        except Exception:
-            df_master_all = None
+    df_master_all = get_cached_master_csv(master_csv_file)
 
     existing_reports = glob.glob("audit_report_*.xlsx")
     nepal_tz = timezone(timedelta(hours=5, minutes=45))
@@ -550,6 +566,7 @@ with main_mode_tab1:
         with dash_refresh_col:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
             if st.button("Refresh", use_container_width=True):
+                st.cache_data.clear()
                 st.session_state.clear()
                 st.rerun()
         
@@ -559,19 +576,13 @@ with main_mode_tab1:
             if selected_period.startswith("Today"):
                 today_file = [f for f in existing_reports if today_npt_str in f]
                 if today_file:
-                    xls = pd.ExcelFile(today_file[0])
-                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
-                    if "Summary Report" in xls.sheet_names:
-                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                    df_details, df_summary = get_cached_excel_report(today_file[0])
                 elif df_master_all is not None and "Report Date" in df_master_all.columns:
                     df_details = df_master_all[df_master_all["Report Date"].str.strip() == today_date_str].copy()
             elif selected_period.startswith("Yesterday"):
                 yest_file = [f for f in existing_reports if yest_npt_str in f]
                 if yest_file:
-                    xls = pd.ExcelFile(yest_file[0])
-                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
-                    if "Summary Report" in xls.sheet_names:
-                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                    df_details, df_summary = get_cached_excel_report(yest_file[0])
                 elif df_master_all is not None and "Report Date" in df_master_all.columns:
                     df_details = df_master_all[df_master_all["Report Date"].str.strip() == yest_date_str].copy()
             elif "Weekly" in selected_period:
@@ -594,19 +605,13 @@ with main_mode_tab1:
                 clean_target = selected_period.strip()
                 past_file = [f for f in existing_reports if clean_target.replace(" ", "_") in f]
                 if past_file:
-                    xls = pd.ExcelFile(past_file[0])
-                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
-                    if "Summary Report" in xls.sheet_names:
-                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                    df_details, df_summary = get_cached_excel_report(past_file[0])
                 elif df_master_all is not None and "Report Date" in df_master_all.columns:
                     df_details = df_master_all[df_master_all["Report Date"].str.strip() == clean_target].copy()
 
             if df_details is None or df_details.empty:
                 if output_file and os.path.exists(output_file):
-                    xls = pd.ExcelFile(output_file)
-                    df_details = pd.read_excel(xls, sheet_name="Audit Details")
-                    if "Summary Report" in xls.sheet_names:
-                        df_summary = pd.read_excel(xls, sheet_name="Summary Report", nrows=5)
+                    df_details, df_summary = get_cached_excel_report(output_file)
                 elif df_master_all is not None and not df_master_all.empty:
                     df_details = df_master_all.copy()
                 else:
@@ -922,10 +927,10 @@ with main_mode_tab1:
             with tab3:
                 st.subheader("Summary Report Sheet View")
                 if 'df_summary' in locals() and df_summary is not None and not df_summary.empty:
-                    st.dataframe(df_summary, use_container_width=True)
+                    st.dataframe(df_summary.astype(str), use_container_width=True)
                 elif 'xls' in locals() and hasattr(xls, 'sheet_names') and "Summary Report" in xls.sheet_names:
                     df_full_summary = pd.read_excel(xls, sheet_name="Summary Report")
-                    st.dataframe(df_full_summary, use_container_width=True)
+                    st.dataframe(df_full_summary.astype(str), use_container_width=True)
                 else:
                     st.dataframe(team_summary_df, use_container_width=True)
 

@@ -383,7 +383,12 @@ def classify_work_type(row):
         return 'General / Other Issues'
 
 # Mode Selection Tabs in Main Area
-main_mode_tab1, main_mode_tab2 = st.tabs(["Performance Analytics & Scraper", "Combine Uploaded Reports (Manager Tool)"])
+main_mode_tab1, main_mode_tab_repeats, main_mode_tab_scorecard, main_mode_tab2 = st.tabs([
+    "Performance Analytics & Scraper",
+    "Repeat Issue / Customer Risk (Idea 3)",
+    "Technician Leaderboard & Scorecard (Idea 5)",
+    "Combine Uploaded Reports (Manager Tool)"
+])
 
 with main_mode_tab1:
     if run_btn:
@@ -938,6 +943,297 @@ with main_mode_tab1:
             st.error(f"Could not load output preview: {read_err}")
     else:
         st.info("Select an Employee or **ALL TEAM**, set Date Range, then click **Run Audit Scraper** to generate your report.")
+
+with main_mode_tab_repeats:
+    st.markdown("""
+    <div class="sheets-header">
+        <div class="sheets-icon" style="background-color: #D93025;">🔁</div>
+        <div class="sheets-title-box">
+            <h1>Repeat Issue & Chronic Complaint Analyzer</h1>
+            <p>Automatically flags accounts, phone numbers, or customers with multiple field visits and tickets.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    rep_csv_file = "master_audit_history.csv"
+    df_rep_raw = get_cached_master_csv(rep_csv_file)
+    
+    if df_rep_raw is None or df_rep_raw.empty:
+        st.info("No master historical records found in `master_audit_history.csv` yet.")
+    else:
+        df_rep = df_rep_raw.copy()
+        
+        # Filter controls for Repeat analysis
+        r_col1, r_col2, r_col3 = st.columns([2, 2, 2])
+        with r_col1:
+            id_mode = st.selectbox(
+                "Group / Identify By",
+                options=["User Id", "Mobile No", "Customer Name", "Account Name"],
+                index=0,
+                help="Select which identifier to use for spotting repeat customer complaints."
+            )
+        with r_col2:
+            min_tickets = st.slider("Minimum Ticket Count (Repeat Threshold)", min_value=2, max_value=10, value=2)
+        with r_col3:
+            search_cust = st.text_input("Search Customer / ID / Mobile", placeholder="e.g. 9841...")
+            
+        # Group and calculate repeats
+        valid_rows = df_rep[df_rep[id_mode].notna() & (df_rep[id_mode].astype(str).str.strip() != "") & (df_rep[id_mode].astype(str).str.strip().str.lower() != "nan")].copy()
+        
+        if valid_rows.empty:
+            st.warning(f"No valid records found for identifier: {id_mode}")
+        else:
+            cust_group = valid_rows.groupby(id_mode).agg(
+                Total_Tickets=('Ticket Number', 'count'),
+                Unique_Tickets=('Ticket Number', 'nunique'),
+                Technicians_Involved=('Target Employee', lambda s: ", ".join(sorted(set([str(x) for x in s.dropna() if str(x).strip()])))),
+                Categories_Reported=('Sub Category', lambda s: ", ".join(sorted(set([str(x) for x in s.dropna() if str(x).strip()]))[:3])),
+                First_Reported_Date=('Grid Date', 'min'),
+                Last_Reported_Date=('Grid Date', 'max')
+            ).reset_index()
+            
+            repeat_df = cust_group[cust_group['Total_Tickets'] >= min_tickets].sort_values(by='Total_Tickets', ascending=False)
+            
+            if search_cust:
+                repeat_df = repeat_df[repeat_df[id_mode].astype(str).str.contains(search_cust.strip(), case=False, na=False)]
+                
+            # Summary Metrics for Repeats
+            tot_repeat_entities = len(repeat_df)
+            tot_repeat_tickets = repeat_df['Total_Tickets'].sum() if not repeat_df.empty else 0
+            max_repeat_count = int(repeat_df['Total_Tickets'].max()) if not repeat_df.empty else 0
+            
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-title">Chronic Accounts</div>
+                    <div class="kpi-value" style="color: #D93025;">{tot_repeat_entities}</div>
+                    <div class="kpi-subtext">Accounts with &ge;{min_tickets} tickets</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with m2:
+                st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-title">Repeat Work Volume</div>
+                    <div class="kpi-value">{tot_repeat_tickets}</div>
+                    <div class="kpi-subtext">Total tickets involved</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with m3:
+                st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-title">Max Visits on 1 Client</div>
+                    <div class="kpi-value">{max_repeat_count}</div>
+                    <div class="kpi-subtext">Highest repetition</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with m4:
+                st.markdown(f"""
+                <div class="kpi-card">
+                    <div class="kpi-title">Repeat Ticket %</div>
+                    <div class="kpi-value">{((tot_repeat_tickets / len(df_rep)) * 100):.1f}%</div>
+                    <div class="kpi-subtext">Of all master history ({len(df_rep)})</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader(f"Top Chronic Accounts (Sorted by Ticket Frequency)")
+            st.dataframe(repeat_df, use_container_width=True, height=350)
+            
+            # Drill-down view into a selected customer
+            st.markdown("---")
+            st.subheader("Customer Complaint History & Audit Trail Drill-Down")
+            
+            top_options = repeat_df[id_mode].astype(str).tolist()[:50]
+            if top_options:
+                selected_entity = st.selectbox(
+                    f"Select {id_mode} to view full timeline and technician logs:",
+                    options=top_options,
+                    index=0
+                )
+                
+                drilldown_rows = valid_rows[valid_rows[id_mode].astype(str) == selected_entity].copy()
+                cols_to_show = [c for c in ['Grid Date', 'Ticket Number', 'Target Employee', 'Status', 'Category', 'Sub Category', 'Grid Remark', 'Resolution Time (From Assigned)'] if c in drilldown_rows.columns]
+                st.dataframe(drilldown_rows[cols_to_show], use_container_width=True)
+            else:
+                st.info("No repeat accounts meet the current filter criteria.")
+
+with main_mode_tab_scorecard:
+    st.markdown("""
+    <div class="sheets-header">
+        <div class="sheets-icon" style="background-color: #F9AB00;">🏆</div>
+        <div class="sheets-title-box">
+            <h1>Technician Leaderboard & Gamification Scorecard</h1>
+            <p>Objective monthly and weekly performance rankings, resolution speed medals, and upgrade leaderboards.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    score_csv_file = "master_audit_history.csv"
+    df_score_raw = get_cached_master_csv(score_csv_file)
+    
+    if df_score_raw is None or df_score_raw.empty:
+        st.info("No master historical records available for scorecard calculation.")
+    else:
+        df_score = df_score_raw.copy()
+        
+        # Period Filter for Scorecard
+        sc_col1, sc_col2 = st.columns([2, 4])
+        with sc_col1:
+            all_reports = sorted(list(df_score['Report Date'].dropna().unique()), reverse=True) if 'Report Date' in df_score.columns else []
+            sc_period = st.selectbox(
+                "Scorecard Time Horizon",
+                options=["All-Time Master History", "Last 7 Days (Weekly)", "Current Month (October 2026)", "Bhadra Month (17 Aug - 16 Sep 2026)"],
+                index=0
+            )
+            
+        nepal_tz = timezone(timedelta(hours=5, minutes=45))
+        now_npt = datetime.now(nepal_tz)
+        
+        if sc_period == "Last 7 Days (Weekly)":
+            cutoff_dt = now_npt - timedelta(days=7)
+            def in_last_7(d):
+                try:
+                    return datetime.strptime(str(d).strip(), "%d %b %Y").date() >= cutoff_dt.date()
+                except Exception:
+                    return False
+            df_filtered_sc = df_score[df_score['Report Date'].apply(in_last_7)].copy() if 'Report Date' in df_score.columns else df_score
+        elif "October" in sc_period:
+            df_filtered_sc = df_score[df_score['Report Date'].str.contains('Oct 2026', case=False, na=False)].copy() if 'Report Date' in df_score.columns else df_score
+        elif "Bhadra" in sc_period:
+            df_filtered_sc = df_score[df_score['Report Date'].str.contains('Aug 2026|14 Sep 2026|15 Sep 2026|16 Sep 2026', case=False, na=False)].copy() if 'Report Date' in df_score.columns else df_score
+        else:
+            df_filtered_sc = df_score.copy()
+            
+        emp_key = 'Grid Employee Name' if 'Grid Employee Name' in df_filtered_sc.columns else 'Target Employee'
+        df_filtered_sc['Technician'] = df_filtered_sc[emp_key].fillna(df_filtered_sc.get('Target Employee', 'Unknown'))
+        
+        # Helpers for solved and duration
+        def is_sc_solved(row):
+            st_val = str(row.get("Status", "")).strip().lower()
+            rm_val = str(row.get("Grid Remark", "")).strip().lower()
+            if st_val in ["completed", "closed"]:
+                return True
+            if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
+                return True
+            return False
+            
+        def parse_mins(val):
+            if not val or pd.isna(val):
+                return None
+            s = str(val).strip()
+            if s in ['N/A', 'Negative Time', '']:
+                return None
+            total_m = 0
+            d_m = re.search(r'(\d+)\s*d', s)
+            h_m = re.search(r'(\d+)\s*h', s)
+            m_m = re.search(r'(\d+)\s*m', s)
+            if d_m: total_m += int(d_m.group(1)) * 1440
+            if h_m: total_m += int(h_m.group(1)) * 60
+            if m_m: total_m += int(m_m.group(1))
+            return total_m if (d_m or h_m or m_m) else None
+            
+        df_filtered_sc['Is_Solved'] = df_filtered_sc.apply(is_sc_solved, axis=1)
+        df_filtered_sc['Is_Wifi6'] = df_filtered_sc.apply(lambda r: classify_work_type(r) == 'WiFi 6 Upgrade', axis=1)
+        df_filtered_sc['Duration_Mins'] = df_filtered_sc['Resolution Time (From Assigned)'].apply(parse_mins)
+        
+        # Aggregate per technician
+        scorecard_rows = []
+        for tech in sorted(df_filtered_sc['Technician'].dropna().unique()):
+            sub = df_filtered_sc[df_filtered_sc['Technician'] == tech]
+            tot = len(sub)
+            if tot == 0:
+                continue
+            solved = int(sub['Is_Solved'].sum())
+            wifi6 = int(sub['Is_Wifi6'].sum())
+            sol_rate = round((solved / tot * 100), 1) if tot > 0 else 0.0
+            
+            valid_durations = sub['Duration_Mins'].dropna()
+            med_time = round(valid_durations.median(), 0) if not valid_durations.empty else None
+            avg_time = round(valid_durations.mean(), 0) if not valid_durations.empty else None
+            
+            def fmt_m(m):
+                if m is None: return "N/A"
+                m = int(m)
+                days = m // 1440
+                hours = (m % 1440) // 60
+                mins = m % 60
+                parts = []
+                if days > 0: parts.append(f"{days}d")
+                if hours > 0: parts.append(f"{hours}h")
+                parts.append(f"{mins}m")
+                return " ".join(parts)
+                
+            scorecard_rows.append({
+                "Technician": tech,
+                "Total Tickets": tot,
+                "Solved Count": solved,
+                "Solution Rate %": sol_rate,
+                "WiFi 6 Upgrades": wifi6,
+                "Median Resolution Time": fmt_m(med_time),
+                "Median_Min_Raw": med_time if med_time is not None else 999999
+            })
+            
+        sc_df = pd.DataFrame(scorecard_rows)
+        if sc_df.empty:
+            st.info("No records match the selected horizon.")
+        else:
+            # Award Medals and Ranks
+            # 1. Volume Champion
+            top_volume = sc_df.sort_values(by="Total Tickets", ascending=False).iloc[0]
+            # 2. Top Wi-Fi 6 Upgrader
+            top_wifi6 = sc_df.sort_values(by="WiFi 6 Upgrades", ascending=False).iloc[0]
+            # 3. Fastest Speed Demon (with at least 50 tickets or max)
+            speed_pool = sc_df[sc_df["Total Tickets"] >= min(20, sc_df["Total Tickets"].max())]
+            top_speed = speed_pool.sort_values(by="Median_Min_Raw", ascending=True).iloc[0] if not speed_pool.empty else sc_df.iloc[0]
+            
+            # Display Trophy Podium
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                st.markdown(f"""
+                <div class="kpi-card" style="border: 1px solid #F9AB00; background: #FEF7E0;">
+                    <div class="kpi-title" style="color: #B06000;">🥇 Volume Champion</div>
+                    <div class="kpi-value" style="color: #202124; font-size: 1.25rem;">{top_volume['Technician']}</div>
+                    <div class="kpi-subtext" style="color: #5F6368;"><b>{top_volume['Total Tickets']} Tickets</b> Handled</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with p2:
+                st.markdown(f"""
+                <div class="kpi-card" style="border: 1px solid #1A73E8; background: #E8F0FE;">
+                    <div class="kpi-title" style="color: #1A73E8;">⚡ Speed Demon (Median TAT)</div>
+                    <div class="kpi-value" style="color: #202124; font-size: 1.25rem;">{top_speed['Technician']}</div>
+                    <div class="kpi-subtext" style="color: #5F6368;"><b>{top_speed['Median Resolution Time']}</b> Turnaround</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with p3:
+                st.markdown(f"""
+                <div class="kpi-card" style="border: 1px solid #137333; background: #E6F4EA;">
+                    <div class="kpi-title" style="color: #137333;">📡 Wi-Fi 6 Upgrade Master</div>
+                    <div class="kpi-value" style="color: #202124; font-size: 1.25rem;">{top_wifi6['Technician']}</div>
+                    <div class="kpi-subtext" style="color: #5F6368;"><b>{top_wifi6['WiFi 6 Upgrades']} Upgrades</b> Installed</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader("Official Performance Leaderboard")
+            
+            # Formatted Leaderboard Table
+            leaderboard_table = sc_df.sort_values(by="Total Tickets", ascending=False).drop(columns=["Median_Min_Raw"])
+            leaderboard_table.reset_index(drop=True, inplace=True)
+            leaderboard_table.index += 1
+            leaderboard_table.index.name = "Rank"
+            
+            st.dataframe(leaderboard_table, use_container_width=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.subheader("Workload & Upgrade Visual Distribution")
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.caption("Tickets Handled per Technician")
+                st.bar_chart(leaderboard_table.set_index("Technician")["Total Tickets"])
+            with chart_col2:
+                st.caption("Wi-Fi 6 Upgrades Completed per Technician")
+                st.bar_chart(leaderboard_table.set_index("Technician")["WiFi 6 Upgrades"])
 
 with main_mode_tab2:
     st.subheader("Executive Team Report Merger (Manager Tool)")

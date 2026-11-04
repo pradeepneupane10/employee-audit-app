@@ -198,7 +198,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Ensure Playwright chromium binary is installed
+# Ensure Playwright chromium binary is installed when scraper is invoked
 import subprocess
 @st.cache_resource
 def setup_playwright():
@@ -211,8 +211,6 @@ def setup_playwright():
     except Exception:
         pass
     return True
-
-setup_playwright()
 
 # Title Banner - Google Sheets Style
 st.markdown("""
@@ -382,6 +380,28 @@ def classify_work_type(row):
     else:
         return 'General / Other Issues'
 
+# Cached Data Loaders
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_master_csv(file_path):
+    if os.path.exists(file_path):
+        try:
+            return pd.read_csv(file_path, dtype=str)
+        except Exception:
+            return None
+    return None
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_excel_report(file_path):
+    if file_path and os.path.exists(file_path):
+        try:
+            xls = pd.ExcelFile(file_path)
+            df_det = pd.read_excel(xls, sheet_name="Audit Details") if "Audit Details" in xls.sheet_names else None
+            df_sum = pd.read_excel(xls, sheet_name="Summary Report", nrows=5) if "Summary Report" in xls.sheet_names else None
+            return df_det, df_sum
+        except Exception:
+            return None, None
+    return None, None
+
 # Mode Selection Tabs in Main Area
 main_mode_tab1, main_mode_tab_repeats, main_mode_tab_scorecard, main_mode_tab_sla, main_mode_tab_cdb, main_mode_tab2 = st.tabs([
     "Performance Analytics & Scraper",
@@ -394,6 +414,7 @@ main_mode_tab1, main_mode_tab_repeats, main_mode_tab_scorecard, main_mode_tab_sl
 
 with main_mode_tab1:
     if run_btn:
+        setup_playwright()
         st.info(f"Starting automated scraper for **{employee_name}** from `{from_date_str}` to `{to_date_str}`...")
         
         log_container = st.empty()
@@ -481,27 +502,6 @@ with main_mode_tab1:
             st.exception(e)
 
     # Automatically discover master historical database and available daily reports
-    @st.cache_data(ttl=60, show_spinner=False)
-    def get_cached_master_csv(file_path):
-        if os.path.exists(file_path):
-            try:
-                return pd.read_csv(file_path, dtype=str)
-            except Exception:
-                return None
-        return None
-
-    @st.cache_data(ttl=60, show_spinner=False)
-    def get_cached_excel_report(file_path):
-        if file_path and os.path.exists(file_path):
-            try:
-                xls = pd.ExcelFile(file_path)
-                df_det = pd.read_excel(xls, sheet_name="Audit Details") if "Audit Details" in xls.sheet_names else None
-                df_sum = pd.read_excel(xls, sheet_name="Summary Report", nrows=5) if "Summary Report" in xls.sheet_names else None
-                return df_det, df_sum
-            except Exception:
-                return None, None
-        return None, None
-
     import glob
     master_csv_file = "master_audit_history.csv"
     df_master_all = get_cached_master_csv(master_csv_file)

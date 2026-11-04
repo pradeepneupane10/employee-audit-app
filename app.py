@@ -650,6 +650,41 @@ with main_mode_tab1:
                         return str(row.iloc[0]["Value"])
                 return "N/A"
 
+            def compute_avg_duration_str(col_name):
+                if col_name not in df_details.columns:
+                    return "N/A"
+                mins = []
+                for val in df_details[col_name].dropna():
+                    s = str(val).strip()
+                    if not s or s in ['N/A', 'Negative Time']: continue
+                    tm = 0
+                    dm = re.search(r'(\d+)\s*d', s)
+                    hm = re.search(r'(\d+)\s*h', s)
+                    mm = re.search(r'(\d+)\s*m', s)
+                    if dm: tm += int(dm.group(1)) * 1440
+                    if hm: tm += int(hm.group(1)) * 60
+                    if mm: tm += int(mm.group(1))
+                    if dm or hm or mm: mins.append(tm)
+                if not mins:
+                    return "N/A"
+                avg_m = int(sum(mins) / len(mins))
+                d = avg_m // 1440
+                h = (avg_m % 1440) // 60
+                m = avg_m % 60
+                parts = []
+                if d > 0: parts.append(f"{d}d")
+                if h > 0: parts.append(f"{h}h")
+                parts.append(f"{m}m")
+                return " ".join(parts)
+
+            avg_assigned_kpi = get_val("From Assigned Date")
+            if avg_assigned_kpi == "N/A":
+                avg_assigned_kpi = compute_avg_duration_str("Resolution Time (From Assigned)")
+
+            avg_created_kpi = get_val("From Created Date")
+            if avg_created_kpi == "N/A":
+                avg_created_kpi = compute_avg_duration_str("Resolution Time (From Created)")
+
             with col1:
                 st.markdown(f"""
                 <div class="kpi-card">
@@ -680,18 +715,18 @@ with main_mode_tab1:
             with col4:
                 st.markdown(f"""
                 <div class="kpi-card">
-                    <div class="kpi-title">Avg Time (Assigned)</div>
-                    <div class="kpi-value" style="font-size:1.4rem;">{get_val("Average Completion Time (From Assigned Date)")}</div>
-                    <div class="kpi-subtext">From assigned timestamp</div>
+                    <div class="kpi-title">Team Turnaround (Assigned)</div>
+                    <div class="kpi-value" style="font-size:1.4rem;">{avg_assigned_kpi}</div>
+                    <div class="kpi-subtext">Assigned to Laxman Koirala &rarr; Completed</div>
                 </div>
                 """, unsafe_allow_html=True)
                 
             with col5:
                 st.markdown(f"""
                 <div class="kpi-card">
-                    <div class="kpi-title">Avg Time (Created)</div>
-                    <div class="kpi-value" style="font-size:1.4rem;">{get_val("Average Completion Time (From Created Date)")}</div>
-                    <div class="kpi-subtext">From initial creation</div>
+                    <div class="kpi-title">Total Ticket Age (Created)</div>
+                    <div class="kpi-value" style="font-size:1.4rem;">{avg_created_kpi}</div>
+                    <div class="kpi-subtext">CRM Creation &rarr; Completed</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1284,12 +1319,12 @@ with main_mode_tab_sla:
             )
         with sla_col2:
             sla_threshold = st.slider(
-                "Delay Threshold (Hours from Created)",
-                min_value=6,
-                max_value=72,
-                value=24,
-                step=6,
-                help="Tickets that took longer than this duration from initial creation to completion are flagged as delayed."
+                "Delay Threshold (Hours from Assigned)",
+                min_value=2,
+                max_value=48,
+                value=12,
+                step=2,
+                help="Tickets that took longer than this duration from assignment to Laxman Koirala / field team to completion are flagged as delayed."
             )
         with sla_col3:
             sla_status_filter = st.selectbox(
@@ -1321,17 +1356,17 @@ with main_mode_tab_sla:
         elif sla_status_filter == "Still Open / In Progress (On Hold)":
             df_filtered_sla = df_filtered_sla[~df_filtered_sla['Status'].astype(str).str.lower().isin(['completed', 'closed'])]
 
-        delayed_tickets = df_filtered_sla[df_filtered_sla['Hours_From_Created'] >= sla_threshold].sort_values(by='Hours_From_Created', ascending=False)
-        on_time_count = len(df_filtered_sla[df_filtered_sla['Hours_From_Created'] < sla_threshold])
-        total_eval = len(df_filtered_sla[df_filtered_sla['Hours_From_Created'].notna()])
+        delayed_tickets = df_filtered_sla[df_filtered_sla['Hours_From_Assigned'] >= sla_threshold].sort_values(by='Hours_From_Assigned', ascending=False)
+        on_time_count = len(df_filtered_sla[df_filtered_sla['Hours_From_Assigned'] < sla_threshold])
+        total_eval = len(df_filtered_sla[df_filtered_sla['Hours_From_Assigned'].notna()])
         adherence_rate = round((on_time_count / total_eval * 100), 1) if total_eval > 0 else 0.0
-        max_delay_h = delayed_tickets['Hours_From_Created'].max() if not delayed_tickets.empty else 0.0
+        max_delay_h = delayed_tickets['Hours_From_Assigned'].max() if not delayed_tickets.empty else 0.0
 
         s1, s2, s3, s4 = st.columns(4)
         with s1:
             st.markdown(f"""
             <div class="kpi-card">
-                <div class="kpi-title">Delayed Tickets (&ge;{sla_threshold}h)</div>
+                <div class="kpi-title">Delayed Tickets (&ge;{sla_threshold}h from Assigned)</div>
                 <div class="kpi-value" style="color: #EA4335;">{len(delayed_tickets)}</div>
                 <div class="kpi-subtext">Out of {len(df_filtered_sla)} evaluated</div>
             </div>
@@ -1341,15 +1376,15 @@ with main_mode_tab_sla:
             <div class="kpi-card">
                 <div class="kpi-title">SLA Adherence Rate</div>
                 <div class="kpi-value" style="color: {'#137333' if adherence_rate >= 80 else '#B06000'};">{adherence_rate}%</div>
-                <div class="kpi-subtext">Resolved under {sla_threshold}h</div>
+                <div class="kpi-subtext">Resolved under {sla_threshold}h from Assigned</div>
             </div>
             """, unsafe_allow_html=True)
         with s3:
             st.markdown(f"""
             <div class="kpi-card">
-                <div class="kpi-title">Max Turnaround Delay</div>
+                <div class="kpi-title">Max Handling Delay</div>
                 <div class="kpi-value">{int(max_delay_h)}h</div>
-                <div class="kpi-subtext">Longest resolution time</div>
+                <div class="kpi-subtext">Longest time from Assigned</div>
             </div>
             """, unsafe_allow_html=True)
         with s4:
@@ -1363,7 +1398,7 @@ with main_mode_tab_sla:
             """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.subheader(f"Delayed Tickets Log (Exceeding {sla_threshold} Hours)")
+        st.subheader(f"Delayed Tickets Log (Exceeding {sla_threshold} Hours from Assigned to Laxman Koirala / Team)")
 
         sla_search = st.text_input("Search Delayed Ticket by Ticket No, Customer, or Remark", placeholder="e.g. TKT134... or customer name", key="sla_search_input")
         table_view = delayed_tickets.copy()

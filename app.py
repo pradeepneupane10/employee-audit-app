@@ -383,10 +383,12 @@ def classify_work_type(row):
         return 'General / Other Issues'
 
 # Mode Selection Tabs in Main Area
-main_mode_tab1, main_mode_tab_repeats, main_mode_tab_scorecard, main_mode_tab2 = st.tabs([
+main_mode_tab1, main_mode_tab_repeats, main_mode_tab_scorecard, main_mode_tab_sla, main_mode_tab_cdb, main_mode_tab2 = st.tabs([
     "Performance Analytics & Scraper",
-    "Repeat Issue / Customer Risk (Idea 3)",
-    "Technician Leaderboard & Scorecard (Idea 5)",
+    "Repeat Customer Risk",
+    "Technician Scorecard",
+    "SLA & Delay Alerts",
+    "Distribution Box (CDB) Hotspots",
     "Combine Uploaded Reports (Manager Tool)"
 ])
 
@@ -1234,6 +1236,256 @@ with main_mode_tab_scorecard:
             with chart_col2:
                 st.caption("Wi-Fi 6 Upgrades Completed per Technician")
                 st.bar_chart(leaderboard_table.set_index("Technician")["WiFi 6 Upgrades"])
+
+with main_mode_tab_sla:
+    st.markdown("""
+    <div class="sheets-header">
+        <div class="sheets-icon" style="background-color: #EA4335;">🚨</div>
+        <div class="sheets-title-box">
+            <h1>SLA Compliance & Delayed Ticket Monitor</h1>
+            <p>Track turnaround delays, prolonged open cases, and tickets exceeding resolution thresholds.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    sla_csv_file = "master_audit_history.csv"
+    df_sla_raw = get_cached_master_csv(sla_csv_file)
+
+    if df_sla_raw is None or df_sla_raw.empty:
+        st.info("No master historical records available for SLA analysis.")
+    else:
+        df_sla = df_sla_raw.copy()
+
+        def parse_duration_to_hours(val):
+            if not val or pd.isna(val):
+                return None
+            s = str(val).strip()
+            if s in ['N/A', 'Negative Time', '']:
+                return None
+            total_m = 0
+            d_m = re.search(r'(\d+)\s*d', s)
+            h_m = re.search(r'(\d+)\s*h', s)
+            m_m = re.search(r'(\d+)\s*m', s)
+            if d_m: total_m += int(d_m.group(1)) * 1440
+            if h_m: total_m += int(h_m.group(1)) * 60
+            if m_m: total_m += int(m_m.group(1))
+            return round(total_m / 60.0, 1) if (d_m or h_m or m_m) else None
+
+        df_sla['Hours_From_Assigned'] = df_sla['Resolution Time (From Assigned)'].apply(parse_duration_to_hours)
+        df_sla['Hours_From_Created'] = df_sla['Resolution Time (From Created)'].apply(parse_duration_to_hours)
+
+        sla_col1, sla_col2, sla_col3 = st.columns([2, 2, 2])
+        with sla_col1:
+            sla_timeframe = st.selectbox(
+                "Filter Timeframe",
+                options=["All-Time Master History", "Last 7 Days (Weekly)", "Current Month (November 2026)", "Past Month (October 2026)"],
+                index=0,
+                key="sla_timeframe_select"
+            )
+        with sla_col2:
+            sla_threshold = st.slider(
+                "Delay Threshold (Hours from Created)",
+                min_value=6,
+                max_value=72,
+                value=24,
+                step=6,
+                help="Tickets that took longer than this duration from initial creation to completion are flagged as delayed."
+            )
+        with sla_col3:
+            sla_status_filter = st.selectbox(
+                "Ticket Resolution State",
+                options=["All Records", "Completed Only", "Still Open / In Progress (On Hold)"],
+                index=0,
+                key="sla_status_select"
+            )
+
+        nepal_tz = timezone(timedelta(hours=5, minutes=45))
+        now_npt = datetime.now(nepal_tz)
+        if sla_timeframe == "Last 7 Days (Weekly)":
+            cutoff_dt = now_npt - timedelta(days=7)
+            def in_last_7(d):
+                try:
+                    return datetime.strptime(str(d).strip(), "%d %b %Y").date() >= cutoff_dt.date()
+                except Exception:
+                    return False
+            df_filtered_sla = df_sla[df_sla['Report Date'].apply(in_last_7)].copy() if 'Report Date' in df_sla.columns else df_sla
+        elif "November" in sla_timeframe:
+            df_filtered_sla = df_sla[df_sla['Report Date'].str.contains('Nov 2026', case=False, na=False)].copy() if 'Report Date' in df_sla.columns else df_sla
+        elif "October" in sla_timeframe:
+            df_filtered_sla = df_sla[df_sla['Report Date'].str.contains('Oct 2026', case=False, na=False)].copy() if 'Report Date' in df_sla.columns else df_sla
+        else:
+            df_filtered_sla = df_sla.copy()
+
+        if sla_status_filter == "Completed Only":
+            df_filtered_sla = df_filtered_sla[df_filtered_sla['Status'].astype(str).str.lower().isin(['completed', 'closed'])]
+        elif sla_status_filter == "Still Open / In Progress (On Hold)":
+            df_filtered_sla = df_filtered_sla[~df_filtered_sla['Status'].astype(str).str.lower().isin(['completed', 'closed'])]
+
+        delayed_tickets = df_filtered_sla[df_filtered_sla['Hours_From_Created'] >= sla_threshold].sort_values(by='Hours_From_Created', ascending=False)
+        on_time_count = len(df_filtered_sla[df_filtered_sla['Hours_From_Created'] < sla_threshold])
+        total_eval = len(df_filtered_sla[df_filtered_sla['Hours_From_Created'].notna()])
+        adherence_rate = round((on_time_count / total_eval * 100), 1) if total_eval > 0 else 0.0
+        max_delay_h = delayed_tickets['Hours_From_Created'].max() if not delayed_tickets.empty else 0.0
+
+        s1, s2, s3, s4 = st.columns(4)
+        with s1:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">Delayed Tickets (&ge;{sla_threshold}h)</div>
+                <div class="kpi-value" style="color: #EA4335;">{len(delayed_tickets)}</div>
+                <div class="kpi-subtext">Out of {len(df_filtered_sla)} evaluated</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with s2:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">SLA Adherence Rate</div>
+                <div class="kpi-value" style="color: {'#137333' if adherence_rate >= 80 else '#B06000'};">{adherence_rate}%</div>
+                <div class="kpi-subtext">Resolved under {sla_threshold}h</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with s3:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">Max Turnaround Delay</div>
+                <div class="kpi-value">{int(max_delay_h)}h</div>
+                <div class="kpi-subtext">Longest resolution time</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with s4:
+            open_count = len(df_filtered_sla[~df_filtered_sla['Status'].astype(str).str.lower().isin(['completed', 'closed'])])
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">Unclosed / Open</div>
+                <div class="kpi-value" style="color: #1A73E8;">{open_count}</div>
+                <div class="kpi-subtext">Pending / On Hold</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader(f"Delayed Tickets Log (Exceeding {sla_threshold} Hours)")
+
+        sla_search = st.text_input("Search Delayed Ticket by Ticket No, Customer, or Remark", placeholder="e.g. TKT134... or customer name", key="sla_search_input")
+        table_view = delayed_tickets.copy()
+        if sla_search:
+            table_view = table_view[table_view.astype(str).apply(lambda row: row.str.contains(sla_search.strip(), case=False).any(), axis=1)]
+
+        show_cols = [c for c in ['Ticket Number', 'Customer Name', 'Target Employee', 'Status', 'Category', 'Sub Category', 'Created Date', 'Resolution Time (From Created)', 'Resolution Time (From Assigned)', 'Grid Remark'] if c in table_view.columns]
+        st.dataframe(table_view[show_cols], use_container_width=True, height=350)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader("Technician Delayed Tickets Distribution")
+        tech_col = 'Grid Employee Name' if 'Grid Employee Name' in delayed_tickets.columns else 'Target Employee'
+        tech_delays = delayed_tickets[tech_col].dropna().value_counts()
+        if not tech_delays.empty:
+            st.bar_chart(tech_delays)
+        else:
+            st.success("No delayed tickets recorded under the current threshold!")
+
+
+with main_mode_tab_cdb:
+    st.markdown("""
+    <div class="sheets-header">
+        <div class="sheets-icon" style="background-color: #1A73E8;">🗺️</div>
+        <div class="sheets-title-box">
+            <h1>Distribution Box (CDB) & Hotspot Clustering</h1>
+            <p>Pinpoint high-failure fiber distribution boxes, repeat cable breaks, and localized network hotspots.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    cdb_csv_file = "master_audit_history.csv"
+    df_cdb_raw = get_cached_master_csv(cdb_csv_file)
+
+    if df_cdb_raw is None or df_cdb_raw.empty:
+        st.info("No master historical records available for location clustering.")
+    else:
+        df_cdb = df_cdb_raw.copy()
+        valid_cdb = df_cdb[df_cdb['Associated Location Name'].notna() & (df_cdb['Associated Location Name'].astype(str).str.strip() != "") & (df_cdb['Associated Location Name'].astype(str).str.lower() != 'nan')].copy()
+
+        c_col1, c_col2 = st.columns([3, 3])
+        with c_col1:
+            cdb_min = st.slider("Minimum Ticket Threshold per CDB", min_value=3, max_value=30, value=10, help="Highlight CDBs that have accumulated at least this many tickets.")
+        with c_col2:
+            search_cdb = st.text_input("Search CDB Box or Neighborhood", placeholder="e.g. 2,2 or Mahalaxmi...", key="cdb_search_input")
+
+        cdb_grouped = valid_cdb.groupby('Associated Location Name').agg(
+            Total_Tickets=('Ticket Number', 'count'),
+            Unique_Tickets=('Ticket Number', 'nunique'),
+            Primary_Category=('Category', lambda s: s.value_counts().index[0] if not s.dropna().empty else "N/A"),
+            Top_Sub_Category=('Sub Category', lambda s: s.value_counts().index[0] if not s.dropna().empty else "N/A"),
+            Technicians_Visited=('Target Employee', lambda s: ", ".join(sorted(set([str(x) for x in s.dropna() if str(x).strip()]))[:3])),
+            Sample_Address=('Customer Address', lambda s: str(s.dropna().iloc[0])[:40] if not s.dropna().empty else "N/A"),
+            First_Incident=('Grid Date', 'min'),
+            Latest_Incident=('Grid Date', 'max')
+        ).reset_index()
+
+        hotspot_cdb = cdb_grouped[cdb_grouped['Total_Tickets'] >= cdb_min].sort_values(by='Total_Tickets', ascending=False)
+        if search_cdb:
+            hotspot_cdb = hotspot_cdb[
+                hotspot_cdb['Associated Location Name'].astype(str).str.contains(search_cdb.strip(), case=False, na=False) |
+                hotspot_cdb['Sample_Address'].astype(str).str.contains(search_cdb.strip(), case=False, na=False)
+            ]
+
+        tot_hotspots = len(hotspot_cdb)
+        tot_hotspot_tickets = hotspot_cdb['Total_Tickets'].sum() if not hotspot_cdb.empty else 0
+        top_box = hotspot_cdb.iloc[0]['Associated Location Name'] if not hotspot_cdb.empty else "None"
+        top_box_count = hotspot_cdb.iloc[0]['Total_Tickets'] if not hotspot_cdb.empty else 0
+
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">Identified Hotspot CDBs</div>
+                <div class="kpi-value" style="color: #1A73E8;">{tot_hotspots}</div>
+                <div class="kpi-subtext">CDBs with &ge;{cdb_min} tickets</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with k2:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">Hotspot Ticket Volume</div>
+                <div class="kpi-value">{tot_hotspot_tickets}</div>
+                <div class="kpi-subtext">Localized incidents</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with k3:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">Most Critical CDB</div>
+                <div class="kpi-value" style="color: #EA4335;">{top_box}</div>
+                <div class="kpi-subtext">{top_box_count} Total Incidents</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with k4:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">Location Coverage</div>
+                <div class="kpi-value">{round((len(valid_cdb) / len(df_cdb) * 100), 1)}%</div>
+                <div class="kpi-subtext">{len(valid_cdb)} tickets tagged</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader("Top Distribution Box (CDB) Failure Ranking")
+        st.dataframe(hotspot_cdb, use_container_width=True, height=350)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader("Top 15 Hotspot CDB Failure Chart")
+        chart_top15 = hotspot_cdb.head(15)
+        if not chart_top15.empty:
+            st.bar_chart(chart_top15.set_index("Associated Location Name")["Total_Tickets"])
+
+        st.markdown("---")
+        st.subheader("Distribution Box Incident Drill-Down")
+        top_cdb_options = hotspot_cdb['Associated Location Name'].astype(str).tolist()[:40]
+        if top_cdb_options:
+            selected_cdb = st.selectbox("Select Distribution Box to inspect all logged tickets:", options=top_cdb_options, index=0)
+            cdb_drilldown = valid_cdb[valid_cdb['Associated Location Name'].astype(str) == selected_cdb].copy()
+            cdb_cols = [c for c in ['Grid Date', 'Ticket Number', 'Target Employee', 'Status', 'Category', 'Sub Category', 'Customer Name', 'Customer Address', 'Grid Remark'] if c in cdb_drilldown.columns]
+            st.dataframe(cdb_drilldown[cdb_cols], use_container_width=True)
+        else:
+            st.info("No distribution boxes meet the selected threshold.")
 
 with main_mode_tab2:
     st.subheader("Executive Team Report Merger (Manager Tool)")

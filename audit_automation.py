@@ -430,25 +430,18 @@ click_row_date_js = click_row_link_js = r"""
 
 scroll_modal_js = r"""
 () => {
-    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-    );
-    if (headers.length === 0) return false;
-    
-    let container = null;
-    let parent = headers[0].parentElement;
-    while (parent && parent.tagName !== 'BODY') {
-        if (parent.querySelector('input[type="button"][value="Close"]') || parent.innerText.includes('Ticket Number')) {
-            container = parent;
-            break;
-        }
-        parent = parent.parentElement;
-    }
-    
-    if (!container) container = document;
-    
     let scrolled = false;
-    const allElements = container.querySelectorAll('*');
+    try {
+        if (document.scrollingElement) {
+            document.scrollingElement.scrollTop = document.scrollingElement.scrollHeight;
+            scrolled = true;
+        }
+        if (document.body) {
+            document.body.scrollTop = document.body.scrollHeight;
+        }
+    } catch (e) {}
+
+    const allElements = document.querySelectorAll('*');
     for (const el of allElements) {
         if (el.scrollHeight > el.clientHeight && 
             (window.getComputedStyle(el).overflowY === 'auto' || 
@@ -478,23 +471,7 @@ extract_modal_data_js = r"""
         "Associated Location Name", "Longitude"
     ];
     
-    const headers = Array.from(document.querySelectorAll('*')).filter(el => 
-        el.textContent && el.textContent.trim() === 'Case Information' && el.offsetWidth > 0
-    );
-    
-    let container = null;
-    if (headers.length > 0) {
-        let parent = headers[0].parentElement;
-        while (parent && parent.tagName !== 'BODY') {
-            if (parent.querySelector('input[type="button"][value="Close"]') || parent.innerText.includes('Ticket Number')) {
-                container = parent;
-                break;
-            }
-            parent = parent.parentElement;
-        }
-    }
-    if (!container) container = document;
-    
+    const container = document.body || document;
     const data = {};
     const cells = Array.from(container.querySelectorAll('td'));
     
@@ -533,13 +510,16 @@ extract_modal_data_js = r"""
         }
     }
 
-    // Extract Solution Given / Work Log / Employee Remarks from modal text
+    // Extract Solution Given / Work Log / Employee Remarks from full modal body text
     let solutionGivenText = "";
-    let fullText = (container.innerText || container.textContent || "").trim();
+    let fullText = (document.body ? (document.body.innerText || document.body.textContent || "") : "").trim();
     
-    const solutionMatch = fullText.match(/Solution Given[\s\S]*/i);
+    const solutionMatch = fullText.match(/Solution Given[\s\S]*/i) || fullText.match(/\bRemark\b[\s\S]*/i);
     if (solutionMatch) {
-        solutionGivenText = solutionMatch[0].replace(/^Solution Given\s*/i, '').replace(/Close\s*$/i, '').trim();
+        solutionGivenText = solutionMatch[0]
+            .replace(/^(Solution Given|Remark)\s*/i, '')
+            .replace(/Close\s*$/i, '')
+            .trim();
     }
     
     data["Solution Given"] = solutionGivenText || "";
@@ -762,14 +742,14 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs, known_
                 wait_for_postback(page, timeout_ms=4000)
                 page.wait_for_timeout(50)
                 
-                # Robust check for modal frame
+                # Robust check for modal frame (up to 4.5s for busy portal responses)
                 modal_frame = None
-                for _ in range(40):
+                for _ in range(90):
                     direct_f = page.frame(name="ContentPlaceHolder1_ifrm")
                     if direct_f and direct_f.url != "about:blank":
                         try:
                             body_len = direct_f.evaluate("() => document.body ? document.body.innerText.length : 0")
-                            if body_len > 20:
+                            if body_len > 30:
                                 modal_frame = direct_f
                                 break
                         except Exception:
@@ -802,11 +782,21 @@ def scrape_single_employee(target_emp, from_date, to_date, launch_kwargs, known_
                         modal_frame.evaluate(scroll_modal_js)
                     except Exception:
                         pass
-                    page.wait_for_timeout(30)
+                    page.wait_for_timeout(250)
                     try:
                         modal_data = modal_frame.evaluate(extract_modal_data_js) or {}
                     except Exception:
                         modal_data = {}
+                    
+                    # Retry once if Ticket Number did not finish rendering yet
+                    if not modal_data.get("Ticket Number"):
+                        page.wait_for_timeout(400)
+                        try:
+                            modal_frame.evaluate(scroll_modal_js)
+                            page.wait_for_timeout(200)
+                            modal_data = modal_frame.evaluate(extract_modal_data_js) or {}
+                        except Exception:
+                            pass
                     
                     # Close modal swiftly
                     closed = False
@@ -965,9 +955,16 @@ def main():
                     emp_k = str(r.get("Target Employee", r.get("Employee Name", ""))).strip().lower()
                     date_k = str(r.get("Grid Date", "")).strip()
                     rem_k = str(r.get("Grid Remark", "")).strip()
-                    if emp_k and (date_k or rem_k):
+                    tkt_k = str(r.get("Ticket Number", "")).strip()
+                    st_k = str(r.get("Status", "")).strip()
+                    # Self-healing cache: only mark as known if modal data (Ticket Number & Status) was captured
+                    has_valid_modal = (
+                        tkt_k and tkt_k.lower() != "nan" and
+                        st_k and st_k.lower() != "nan"
+                    )
+                    if emp_k and (date_k or rem_k) and has_valid_modal:
                         known_keys.add(f"{emp_k}|{date_k}|{rem_k}")
-                log(f"⚡ Incremental Mode Active: Loaded {len(existing_records)} existing records ({len(known_keys)} unique keys) from {os.path.basename(output_file)}.")
+                log(f"⚡ Incremental Mode Active: Loaded {len(existing_records)} existing records ({len(known_keys)} complete keys) from {os.path.basename(output_file)}.")
         except Exception as read_ex:
             log(f"Could not load existing file for incremental check: {read_ex}. Running full scrape.", "WARNING")
             existing_records = []
@@ -1053,17 +1050,103 @@ def main():
         
     df = pd.DataFrame(scraped_records)
     
-    required_cols = ['Ticket Number', 'Status', 'Category', 'Sub Category', 'Assigned Date', 'Created Date', 'Last Modified Date']
+    required_cols = ['Ticket Number', 'Status', 'Category', 'Sub Category', 'Assigned Date', 'Created Date', 'Last Modified Date', 'Grid Date', 'Assign User', 'Assign Team']
     for col in required_cols:
         if col not in df.columns:
             df[col] = None
-            
+
+    # Build lookup of original Laxman Koirala Assigned Dates across current & historical records
+    known_assigned_dates = {}
+    master_csv_path = os.path.join(output_dir, "master_audit_history.csv")
+    if os.path.exists(master_csv_path):
+        try:
+            hist_df = pd.read_csv(master_csv_path, dtype=str)
+            for _, hr in hist_df.iterrows():
+                tkt_h = str(hr.get('Ticket Number', '')).strip()
+                ad_h = str(hr.get('Assigned Date', '')).strip()
+                lmd_h = str(hr.get('Last Modified Date', '')).strip()
+                au_h = str(hr.get('Assign User', '')).strip().lower()
+                if tkt_h and tkt_h.lower() != 'nan' and ad_h and ad_h.lower() != 'nan':
+                    if 'laxman' in au_h or ad_h != lmd_h:
+                        known_assigned_dates[tkt_h] = ad_h
+        except Exception:
+            pass
+
+    for _, cr in df.iterrows():
+        tkt_c = str(cr.get('Ticket Number', '')).strip()
+        ad_c = str(cr.get('Assigned Date', '')).strip()
+        lmd_c = str(cr.get('Last Modified Date', '')).strip()
+        au_c = str(cr.get('Assign User', '')).strip().lower()
+        if tkt_c and tkt_c.lower() != 'nan' and ad_c and ad_c.lower() != 'nan':
+            if 'laxman' in au_c or (ad_c != lmd_c and tkt_c not in known_assigned_dates):
+                known_assigned_dates[tkt_c] = ad_c
+
+    # Restore overwritten Assigned Date when ticket was reassigned back to L1 Support
+    def recover_assigned_date(row):
+        tkt = str(row.get('Ticket Number', '')).strip()
+        ad = str(row.get('Assigned Date', '')).strip()
+        lmd = str(row.get('Last Modified Date', '')).strip()
+        au = str(row.get('Assign User', '')).strip().lower()
+        if tkt in known_assigned_dates and (not ad or ad.lower() == 'nan' or ad == lmd or 'laxman' not in au):
+            return known_assigned_dates[tkt]
+        return row.get('Assigned Date')
+
+    df['Assigned Date'] = df.apply(recover_assigned_date, axis=1)
+
     df['dt_assigned'] = df['Assigned Date'].apply(parse_date_robustly)
     df['dt_created'] = df['Created Date'].apply(parse_date_robustly)
-    df['dt_completed'] = df['Last Modified Date'].apply(parse_date_robustly)
-    
-    df['duration_assigned_sec'] = (df['dt_completed'] - df['dt_assigned']).dt.total_seconds()
-    df['duration_created_sec'] = (df['dt_completed'] - df['dt_created']).dt.total_seconds()
+    df['dt_lastmod'] = df['Last Modified Date'].apply(parse_date_robustly)
+    df['dt_grid'] = df['Grid Date'].apply(parse_date_robustly)
+
+    # Deduplicate multiple updates on the same ticket by the same employee (keep newest update)
+    df['_sort_ts'] = df['dt_grid'].fillna(df['dt_lastmod'])
+    df = df.sort_values(by='_sort_ts', ascending=False).reset_index(drop=True)
+    has_tkt_mask = df['Ticket Number'].notna() & (df['Ticket Number'].astype(str).str.strip() != '') & (df['Ticket Number'].astype(str).str.strip().str.lower() != 'nan')
+    df_with_tkt = df[has_tkt_mask].drop_duplicates(subset=['Ticket Number', 'Target Employee'], keep='first')
+    df_no_tkt = df[~has_tkt_mask]
+    df = pd.concat([df_with_tkt, df_no_tkt], ignore_index=True)
+    df.drop(columns=['_sort_ts'], inplace=True, errors='ignore')
+
+    def compute_accurate_durations(row):
+        dt_a = row.get('dt_assigned')
+        dt_c = row.get('dt_created')
+        dt_l = row.get('dt_lastmod')
+        dt_g = row.get('dt_grid')
+        au = str(row.get('Assign User', '')).strip().lower()
+
+        # Technician completion timestamp: prefer Grid Date (when technician acted),
+        # using Last Modified Date if it's within 2 minutes of Grid Date for exact second precision
+        dt_comp = dt_g if pd.notna(dt_g) else dt_l
+        if pd.notna(dt_g) and pd.notna(dt_l):
+            diff_gl = (dt_l - dt_g).total_seconds()
+            if 0 <= diff_gl <= 120:
+                dt_comp = dt_l
+
+        # Calculate duration from Created Date
+        dur_created_sec = None
+        if pd.notna(dt_comp) and pd.notna(dt_c):
+            sec_c = (dt_comp - dt_c).total_seconds()
+            if sec_c >= 0:
+                dur_created_sec = sec_c
+
+        # Calculate duration from Assigned Date (Laxman Koirala -> Technician Completion)
+        dur_assigned_sec = None
+        if pd.notna(dt_comp) and pd.notna(dt_a):
+            sec_a = (dt_comp - dt_a).total_seconds()
+            # Detect when CRM overwrote Assigned Date with the L1 Support handover timestamp
+            is_l1_overwrite = (
+                'laxman' not in au and (
+                    abs(sec_a) <= 90 or
+                    (pd.notna(dt_l) and abs((dt_l - dt_a).total_seconds()) <= 5) or
+                    (pd.notna(dt_g) and abs((dt_a - dt_g).total_seconds()) <= 90)
+                )
+            )
+            if not is_l1_overwrite and sec_a >= 0:
+                dur_assigned_sec = sec_a
+
+        return pd.Series([dt_comp, dur_assigned_sec, dur_created_sec])
+
+    df[['dt_completed', 'duration_assigned_sec', 'duration_created_sec']] = df.apply(compute_accurate_durations, axis=1)
     
     df['duration_assigned'] = pd.to_timedelta(df['duration_assigned_sec'], unit='s')
     df['duration_created'] = pd.to_timedelta(df['duration_created_sec'], unit='s')
@@ -1072,6 +1155,9 @@ def main():
     
     df['Status_Cleaned'] = df['Status'].astype(str).str.strip().str.capitalize()
     
+    transfer_regex = re.compile(r'\bms\b|\bassign(?:ed)?\s+to\b|\btransfer(?:red)?\b|\bforward(?:ed)?\b|\bhandover\b|\bhandler\b', re.I)
+    ms_team_regex = re.compile(r'\bms\b|\bhandler\b', re.I)
+
     def classify_ticket_handling(row):
         status_clean = str(row.get('Status', '')).strip().capitalize()
         raw_status = str(row.get('Status', '')).strip()
@@ -1079,15 +1165,10 @@ def main():
         assign_team = str(row.get('Assign Team', '')).strip()
         assign_user = str(row.get('Assign User', '')).strip()
         
-        remark_lower = grid_remark.lower()
-        team_lower = assign_team.lower()
-        user_lower = assign_user.lower()
-        
         is_ms_or_transferred = (
-            'ms' in team_lower or 'ms' in user_lower or
-            'ms' in remark_lower or 'assign' in remark_lower or
-            'transfer' in remark_lower or 'forward' in remark_lower or
-            'handover' in remark_lower or 'handler' in remark_lower
+            bool(ms_team_regex.search(assign_team)) or
+            bool(ms_team_regex.search(assign_user)) or
+            bool(transfer_regex.search(grid_remark))
         )
         
         if status_clean in ['Completed', 'Closed']:
@@ -1148,8 +1229,8 @@ def main():
     solved_tickets = df[solved_mask]
     num_solved = len(solved_tickets)
     
-    avg_assigned_duration = solved_tickets['duration_assigned'].mean()
-    avg_created_duration = solved_tickets['duration_created'].mean()
+    avg_assigned_duration = solved_tickets['duration_assigned'].dropna().mean()
+    avg_created_duration = solved_tickets['duration_created'].dropna().mean()
     
     # 1. Category Breakdown for Solved Tickets
     cat_group = solved_tickets.groupby(['Category', 'Sub Category'], dropna=False).agg(
@@ -1210,7 +1291,7 @@ def main():
     })
     
     df_export = df.drop(columns=[
-        'dt_assigned', 'dt_created', 'dt_completed', 
+        'dt_assigned', 'dt_created', 'dt_completed', 'dt_lastmod', 'dt_grid',
         'duration_assigned_sec', 'duration_created_sec',
         'duration_assigned', 'duration_created', 'Status_Cleaned',
         'Is_Solved_Or_Assigned'
@@ -1338,17 +1419,7 @@ def main():
         try:
             emp_col = 'Grid Employee Name' if 'Grid Employee Name' in df.columns else 'Target Employee'
             df['Employee Name'] = df[emp_col].fillna(df.get('Target Employee', 'Unknown'))
-            
-            def is_solved_exec(row):
-                st_val = str(row.get("Status", "")).strip().lower()
-                rm_val = str(row.get("Grid Remark", "")).strip().lower()
-                if st_val in ["completed", "closed"]:
-                    return True
-                if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
-                    return True
-                return False
-
-            df['Is_Solved_Val'] = df.apply(is_solved_exec, axis=1)
+            df['Is_Solved_Val'] = df['Is_Solved_Or_Assigned']
 
             DEFAULT_TEAM_MEMBERS = [
                 "Ajit Shrestha", "Chandramani Tharu", "Om Neupane", "Rajesh Maharjan",
@@ -1456,9 +1527,11 @@ def main():
         else:
             combined_master = df_to_append
         
-        subset_cols = [c for c in ['Ticket Number', 'Grid Date', 'Grid Remark', 'Grid Operation'] if c in combined_master.columns]
-        if subset_cols:
-            combined_master = combined_master.drop_duplicates(subset=subset_cols, keep='last')
+        # Deduplicate cleanly: for rows with Ticket Number, deduplicate by Ticket Number + Target Employee + Report Date
+        has_tkt_m = combined_master['Ticket Number'].notna() & (combined_master['Ticket Number'].astype(str).str.strip() != '') & (combined_master['Ticket Number'].astype(str).str.strip().str.lower() != 'nan')
+        cm_with_tkt = combined_master[has_tkt_m].drop_duplicates(subset=['Ticket Number', 'Target Employee', 'Report Date'], keep='last')
+        cm_no_tkt = combined_master[~has_tkt_m].drop_duplicates(subset=['Target Employee', 'Grid Date', 'Grid Remark'], keep='last')
+        combined_master = pd.concat([cm_with_tkt, cm_no_tkt], ignore_index=True)
         combined_master.to_csv(master_csv_path, index=False, encoding='utf-8')
         log(f"Updated master historical records database ({len(combined_master)} total records): {master_csv_path}")
     except Exception as hist_err:

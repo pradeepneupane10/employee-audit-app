@@ -380,6 +380,61 @@ def classify_work_type(row):
     else:
         return 'General / Other Issues'
 
+_TRANSFER_REGEX = re.compile(r'\bms\b|\bassign(?:ed)?\s+to\b|\btransfer(?:red)?\b|\bforward(?:ed)?\b|\bhandover\b|\bhandler\b', re.I)
+_MS_TEAM_REGEX = re.compile(r'\bms\b|\bhandler\b', re.I)
+
+def is_accurately_solved(row):
+    st_val = str(row.get("Status", "")).strip().lower()
+    rm_val = str(row.get("Grid Remark", "")).strip()
+    team_val = str(row.get("Assign Team", "")).strip()
+    user_val = str(row.get("Assign User", "")).strip()
+    if st_val in ["completed", "closed"]:
+        return True
+    if _MS_TEAM_REGEX.search(team_val) or _MS_TEAM_REGEX.search(user_val) or _TRANSFER_REGEX.search(rm_val):
+        return True
+    return False
+
+def deduplicate_ticket_updates(df_in):
+    """Deduplicates multiple update rows for the same Ticket Number by the same technician on the same report day."""
+    if df_in is None or df_in.empty or "Ticket Number" not in df_in.columns:
+        return df_in
+    emp_col = "Target Employee" if "Target Employee" in df_in.columns else ("Grid Employee Name" if "Grid Employee Name" in df_in.columns else "Employee Name")
+    has_tkt = df_in["Ticket Number"].notna() & (df_in["Ticket Number"].astype(str).str.strip() != "") & (df_in["Ticket Number"].astype(str).str.strip().str.lower() != "nan")
+    dedup_cols = ["Ticket Number"]
+    if emp_col in df_in.columns:
+        dedup_cols.append(emp_col)
+    if "Report Date" in df_in.columns:
+        dedup_cols.append("Report Date")
+    df_with_tkt = df_in[has_tkt].drop_duplicates(subset=dedup_cols, keep="first")
+    df_no_tkt = df_in[~has_tkt]
+    return pd.concat([df_with_tkt, df_no_tkt], ignore_index=True)
+
+def parse_valid_duration_mins(row, col_name):
+    """Parses duration in minutes while filtering out artificial 0m L1 Support handover overwrites."""
+    val = row.get(col_name)
+    if not val or pd.isna(val):
+        return None
+    s = str(val).strip()
+    if not s or s in ['N/A', 'Negative Time', 'nan']:
+        return None
+    if col_name == "Resolution Time (From Assigned)":
+        au = str(row.get("Assign User", "")).strip().lower()
+        ad = str(row.get("Assigned Date", "")).strip()
+        lmd = str(row.get("Last Modified Date", "")).strip()
+        # Exclude artificial 0m or L1 Support handover overwrites where CRM replaced Assigned Date
+        if s == "0m" and "laxman" not in au:
+            return None
+        if ad and lmd and ad == lmd and "laxman" not in au:
+            return None
+    tm = 0
+    dm = re.search(r'(\d+)\s*d', s)
+    hm = re.search(r'(\d+)\s*h', s)
+    mm = re.search(r'(\d+)\s*m', s)
+    if dm: tm += int(dm.group(1)) * 1440
+    if hm: tm += int(hm.group(1)) * 60
+    if mm: tm += int(mm.group(1))
+    return tm if (dm or hm or mm) else None
+
 # Cached Data Loaders
 @st.cache_data(ttl=60, show_spinner=False)
 def get_cached_master_csv(file_path):
@@ -624,18 +679,9 @@ with main_mode_tab1:
                 else:
                     df_details = pd.DataFrame()
 
+            df_details = deduplicate_ticket_updates(df_details)
             df_details['Task / Issue Type'] = df_details.apply(classify_work_type, axis=1)
-            
-            def is_solved_row(row):
-                st_val = str(row.get("Status", "")).strip().lower()
-                rm_val = str(row.get("Grid Remark", "")).strip().lower()
-                if st_val in ["completed", "closed"]:
-                    return True
-                if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
-                    return True
-                return False
-
-            df_details["Is_Solved_Val"] = df_details.apply(is_solved_row, axis=1)
+            df_details["Is_Solved_Val"] = df_details.apply(is_accurately_solved, axis=1)
 
             col1, col2, col3, col4, col5 = st.columns(5)
             
@@ -643,28 +689,15 @@ with main_mode_tab1:
             tot_kpi_solved = int(df_details["Is_Solved_Val"].sum()) if not df_details.empty else 0
             kpi_rate_val = f"{(tot_kpi_solved / tot_kpi_records * 100):.1f}%" if tot_kpi_records > 0 else "0.0%"
 
-            def get_val(metric_name):
-                if df_summary is not None and not df_summary.empty:
-                    row = df_summary[df_summary["Metric"].str.contains(metric_name, case=False, na=False)]
-                    if not row.empty:
-                        return str(row.iloc[0]["Value"])
-                return "N/A"
-
             def compute_avg_duration_str(col_name):
-                if col_name not in df_details.columns:
+                if col_name not in df_details.columns or df_details.empty:
                     return "N/A"
+                solved_subset = df_details[df_details["Is_Solved_Val"]] if "Is_Solved_Val" in df_details.columns else df_details
                 mins = []
-                for val in df_details[col_name].dropna():
-                    s = str(val).strip()
-                    if not s or s in ['N/A', 'Negative Time']: continue
-                    tm = 0
-                    dm = re.search(r'(\d+)\s*d', s)
-                    hm = re.search(r'(\d+)\s*h', s)
-                    mm = re.search(r'(\d+)\s*m', s)
-                    if dm: tm += int(dm.group(1)) * 1440
-                    if hm: tm += int(hm.group(1)) * 60
-                    if mm: tm += int(mm.group(1))
-                    if dm or hm or mm: mins.append(tm)
+                for _, r in solved_subset.iterrows():
+                    tm = parse_valid_duration_mins(r, col_name)
+                    if tm is not None:
+                        mins.append(tm)
                 if not mins:
                     return "N/A"
                 avg_m = int(sum(mins) / len(mins))
@@ -677,13 +710,8 @@ with main_mode_tab1:
                 parts.append(f"{m}m")
                 return " ".join(parts)
 
-            avg_assigned_kpi = get_val("From Assigned Date")
-            if avg_assigned_kpi == "N/A":
-                avg_assigned_kpi = compute_avg_duration_str("Resolution Time (From Assigned)")
-
-            avg_created_kpi = get_val("From Created Date")
-            if avg_created_kpi == "N/A":
-                avg_created_kpi = compute_avg_duration_str("Resolution Time (From Created)")
+            avg_assigned_kpi = compute_avg_duration_str("Resolution Time (From Assigned)")
+            avg_created_kpi = compute_avg_duration_str("Resolution Time (From Created)")
 
             with col1:
                 st.markdown(f"""
@@ -1117,10 +1145,16 @@ with main_mode_tab_scorecard:
         # Period Filter for Scorecard
         sc_col1, sc_col2 = st.columns([2, 4])
         with sc_col1:
-            all_reports = sorted(list(df_score['Report Date'].dropna().unique()), reverse=True) if 'Report Date' in df_score.columns else []
             sc_period = st.selectbox(
                 "Scorecard Time Horizon",
-                options=["All-Time Master History", "Last 7 Days (Weekly)", "Current Month (October 2026)", "Bhadra Month (17 Aug - 16 Sep 2026)"],
+                options=[
+                    "All-Time Master History",
+                    "Last 7 Days (Weekly)",
+                    "Current Month (November 2026)",
+                    "October 2026",
+                    "September 2026",
+                    "Bhadra Month (17 Aug - 16 Sep 2026)"
+                ],
                 index=0
             )
             
@@ -1135,44 +1169,28 @@ with main_mode_tab_scorecard:
                 except Exception:
                     return False
             df_filtered_sc = df_score[df_score['Report Date'].apply(in_last_7)].copy() if 'Report Date' in df_score.columns else df_score
+        elif "November" in sc_period:
+            df_filtered_sc = df_score[df_score['Report Date'].str.contains('Nov 2026', case=False, na=False)].copy() if 'Report Date' in df_score.columns else df_score
         elif "October" in sc_period:
             df_filtered_sc = df_score[df_score['Report Date'].str.contains('Oct 2026', case=False, na=False)].copy() if 'Report Date' in df_score.columns else df_score
+        elif "September" in sc_period and "Bhadra" not in sc_period:
+            df_filtered_sc = df_score[df_score['Report Date'].str.contains('Sep 2026', case=False, na=False)].copy() if 'Report Date' in df_score.columns else df_score
         elif "Bhadra" in sc_period:
             df_filtered_sc = df_score[df_score['Report Date'].str.contains('Aug 2026|14 Sep 2026|15 Sep 2026|16 Sep 2026', case=False, na=False)].copy() if 'Report Date' in df_score.columns else df_score
         else:
             df_filtered_sc = df_score.copy()
+
+        df_filtered_sc = deduplicate_ticket_updates(df_filtered_sc)
             
         emp_key = 'Grid Employee Name' if 'Grid Employee Name' in df_filtered_sc.columns else 'Target Employee'
         df_filtered_sc['Technician'] = df_filtered_sc[emp_key].fillna(df_filtered_sc.get('Target Employee', 'Unknown'))
         
-        # Helpers for solved and duration
-        def is_sc_solved(row):
-            st_val = str(row.get("Status", "")).strip().lower()
-            rm_val = str(row.get("Grid Remark", "")).strip().lower()
-            if st_val in ["completed", "closed"]:
-                return True
-            if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
-                return True
-            return False
-            
-        def parse_mins(val):
-            if not val or pd.isna(val):
-                return None
-            s = str(val).strip()
-            if s in ['N/A', 'Negative Time', '']:
-                return None
-            total_m = 0
-            d_m = re.search(r'(\d+)\s*d', s)
-            h_m = re.search(r'(\d+)\s*h', s)
-            m_m = re.search(r'(\d+)\s*m', s)
-            if d_m: total_m += int(d_m.group(1)) * 1440
-            if h_m: total_m += int(h_m.group(1)) * 60
-            if m_m: total_m += int(m_m.group(1))
-            return total_m if (d_m or h_m or m_m) else None
-            
-        df_filtered_sc['Is_Solved'] = df_filtered_sc.apply(is_sc_solved, axis=1)
+        df_filtered_sc['Is_Solved'] = df_filtered_sc.apply(is_accurately_solved, axis=1)
         df_filtered_sc['Is_Wifi6'] = df_filtered_sc.apply(lambda r: classify_work_type(r) == 'WiFi 6 Upgrade', axis=1)
-        df_filtered_sc['Duration_Mins'] = df_filtered_sc['Resolution Time (From Assigned)'].apply(parse_mins)
+        df_filtered_sc['Duration_Mins'] = df_filtered_sc.apply(
+            lambda r: parse_valid_duration_mins(r, 'Resolution Time (From Assigned)') if r.get('Is_Solved') else None,
+            axis=1
+        )
         
         # Aggregate per technician
         scorecard_rows = []
@@ -1289,25 +1307,14 @@ with main_mode_tab_sla:
     if df_sla_raw is None or df_sla_raw.empty:
         st.info("No master historical records available for SLA analysis.")
     else:
-        df_sla = df_sla_raw.copy()
+        df_sla = deduplicate_ticket_updates(df_sla_raw.copy())
 
-        def parse_duration_to_hours(val):
-            if not val or pd.isna(val):
-                return None
-            s = str(val).strip()
-            if s in ['N/A', 'Negative Time', '']:
-                return None
-            total_m = 0
-            d_m = re.search(r'(\d+)\s*d', s)
-            h_m = re.search(r'(\d+)\s*h', s)
-            m_m = re.search(r'(\d+)\s*m', s)
-            if d_m: total_m += int(d_m.group(1)) * 1440
-            if h_m: total_m += int(h_m.group(1)) * 60
-            if m_m: total_m += int(m_m.group(1))
-            return round(total_m / 60.0, 1) if (d_m or h_m or m_m) else None
+        def parse_valid_hours_row(row, col_name):
+            mins = parse_valid_duration_mins(row, col_name)
+            return round(mins / 60.0, 1) if mins is not None else None
 
-        df_sla['Hours_From_Assigned'] = df_sla['Resolution Time (From Assigned)'].apply(parse_duration_to_hours)
-        df_sla['Hours_From_Created'] = df_sla['Resolution Time (From Created)'].apply(parse_duration_to_hours)
+        df_sla['Hours_From_Assigned'] = df_sla.apply(lambda r: parse_valid_hours_row(r, 'Resolution Time (From Assigned)'), axis=1)
+        df_sla['Hours_From_Created'] = df_sla.apply(lambda r: parse_valid_hours_row(r, 'Resolution Time (From Created)'), axis=1)
 
         sla_col1, sla_col2, sla_col3 = st.columns([2, 2, 2])
         with sla_col1:
@@ -1560,18 +1567,8 @@ with main_mode_tab2:
                 st.warning(f"Could not read {file.name}: {read_err}")
                 
         if all_dfs:
-            master_df = pd.concat(all_dfs, ignore_index=True)
-            
-            def is_solved(row):
-                st_val = str(row.get("Status", "")).strip().lower()
-                rm_val = str(row.get("Grid Remark", "")).strip().lower()
-                if st_val in ["completed", "closed"]:
-                    return True
-                if "ms" in rm_val or "assign" in rm_val or "transfer" in rm_val or "forward" in rm_val:
-                    return True
-                return False
-
-            master_df["Is_Solved_Val"] = master_df.apply(is_solved, axis=1)
+            master_df = deduplicate_ticket_updates(pd.concat(all_dfs, ignore_index=True))
+            master_df["Is_Solved_Val"] = master_df.apply(is_accurately_solved, axis=1)
             
             # Team Summary Calculation
             summary_rows = []
